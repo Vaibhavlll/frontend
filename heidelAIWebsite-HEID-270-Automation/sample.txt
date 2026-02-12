@@ -1,0 +1,26 @@
+main:
+cloned using testing
+CORS issue not able to call session-token api
+updated HOST_URL in env variable to include www. subdomain
+
+testing:
+merged vaibhav's changes with development branch
+merged rounak's custoemr-story-reply branch 
+changes to floating input section
+changes to Link Integrations button
+merged ig-message-reactions branch & fixed minor error in vaibhav's code
+
+development:
+Prithal fixed whitespace issue for messages
+Prithal fixed the whitespace issue for messages
+Prithal's typing indicator new UI updated finally merged
+Merge conflict minor bug issue due to Rounak - fixed
+Merge Vaibhav's canned responses & message input text area line spacing
+Merged Prithal's changes regarding update for all / open / closed filtering of conversations
+prithal's merge had errors he fixed them 
+prithal's merge had errors because of rounak, fixed
+rounak committed on dev branch by mistake, only small changes so letting it through
+solved merge conflicts of rounak's feature branch wa-message-reactions -> dev
+rounak solved and pushed build errors -> deploying them
+solved build errors pt 2.0
+solved build errors pt 3.0

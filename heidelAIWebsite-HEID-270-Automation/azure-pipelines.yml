@@ -1,0 +1,77 @@
+trigger:
+  branches:
+    include:
+      - main
+      - development
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: github-secrets  # Contains GITHUB_PAT
+
+steps:
+- checkout: self
+  persistCredentials: true
+  clean: false
+  fetchDepth: 0
+
+- script: |
+    set -ex
+
+    git config --global user.email "egeniestore@gmail.com"
+    git config --global user.name "Azure DevOps CI/CD"
+
+    BRANCH_NAME="$(Build.SourceBranchName)"
+    
+    if [ "$BRANCH_NAME" = "main" ]; then
+      REPO_NAME="heidelAIWebsite"
+      REMOTE_NAME="github-main"
+    elif [ "$BRANCH_NAME" = "development" ]; then
+      REPO_NAME="heidelAIWebsite"
+      REMOTE_NAME="github-development"
+    else
+      echo "Branch '$BRANCH_NAME' is not configured for GitHub sync. Skipping."
+      exit 0
+    fi
+
+    REMOTE_URL="https://oauth2:$(GITHUB_PAT)@github.com/egenie4u/${REPO_NAME}.git"
+
+    git remote add $REMOTE_NAME $REMOTE_URL
+
+    echo "=== Remote Configuration ==="
+    git remote -v
+
+    echo "=== Ensuring Full Repository History ==="
+    git fetch --unshallow || echo "Repository already complete"
+
+    echo "=== Fetching Latest References ==="
+    git fetch --all --prune
+
+    echo "=== Commit Diff Analysis ==="
+    LOCAL_COMMIT=$(git rev-parse HEAD)
+    REMOTE_COMMIT=$(git ls-remote $REMOTE_NAME $BRANCH_NAME | awk '{print $1}')
+
+    if [ "$LOCAL_COMMIT" != "$REMOTE_COMMIT" ]; then
+        echo "Detected divergence: Local(${LOCAL_COMMIT:0:7}) vs Remote(${REMOTE_COMMIT:0:7})"
+        
+        echo "=== Pushing Changes to GitHub Repo: $REPO_NAME ==="
+        git push --no-thin $REMOTE_NAME HEAD:$BRANCH_NAME --force-with-lease --follow-tags
+
+        echo "=== Push Verification ==="
+        git ls-remote $REMOTE_NAME $BRANCH_NAME
+    else
+        echo "No divergence detected - repositories are in sync"
+    fi
+    
+    git remote remove $REMOTE_NAME
+    
+    if [ "$LOCAL_COMMIT" != "$REMOTE_COMMIT" ]; then
+      echo "=== Triggering Vercel Deploy Hook ==="
+      curl -X GET "https://api.vercel.com/v1/integrations/deploy/prj_RNWR01yIanhCEcX2TFLVkkJJD8sE/Z24Flejapz"
+    fi
+
+
+  displayName: 'Conditional GitHub Sync'
+  env:
+    GIT_REDACT_URLS: false
