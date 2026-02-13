@@ -6,7 +6,7 @@ import { buildFlowDetails } from "./automationFlowSchema";
 import { STEP_SECTIONS, STEP_BY_ID, StepIcon } from "./stepDefinitions";
 import { useApi } from "@/lib/session_api";
 import { toast } from "sonner";
-import { Play, Save, Eye, ArrowLeft, Undo2, Redo2, Monitor, MoreVertical, Pencil, HelpCircle, ChevronRight } from 'lucide-react';
+import { Play, Save, Eye, ArrowLeft, Undo2, Redo2, Monitor, MoreVertical, Pencil, HelpCircle, ChevronRight, Loader2 } from 'lucide-react';
 
 type Node = EditorNode;
 
@@ -469,6 +469,88 @@ export default function EditorView({ onBack, flowId: flowIdProp, flowName: flowN
     }
   };
 
+  // ============================================================================
+  // NEW: PUBLISH FLOW HANDLER
+  // ============================================================================
+  const handlePublish = async () => {
+    // Step 1: Validate the flow
+    const edges = connections.map((c) => ({ from: c.from, to: c.to }));
+    
+    if (nodes.length === 0) {
+      toast.error('Cannot publish empty flow');
+      return;
+    }
+
+    const validation = validateFlowBeforeSave(nodes, edges);
+    if (!validation.valid) {
+      toast.error(validation.errors[0] ?? 'Flow validation failed');
+      return;
+    }
+
+    // Step 2: Save the flow first
+    setSaveStatus('saving');
+    try {
+      const flow_details = buildFlowDetails(nodes, edges, {
+        flowId,
+        flowName,
+        status: 'draft', // Keep as draft during save
+        version: 1,
+      });
+
+      let currentFlowId = flowId;
+
+      // Save if new or update if existing
+      if (flowId && flowId !== 'new') {
+        await api.patch(`/api/automation_flows/${flowId}`, flow_details);
+      } else {
+        const response = await api.post('/api/automation_flows', flow_details);
+        if (response.data?.id) {
+          currentFlowId = String(response.data.id);
+          setFlowId(currentFlowId);
+        }
+      }
+
+      // Step 3: Now publish the flow
+      if (currentFlowId && currentFlowId !== 'new') {
+        const publishResponse = await api.post(
+          `/api/automation_flows/${currentFlowId}/publish`
+        );
+
+        if (publishResponse.status === 200) {
+          setSaveStatus('saved');
+          toast.success('Flow published successfully!', {
+            description: 'Your automation is now live and triggers have been registered.',
+          });
+          
+          // Optional: Navigate back to dashboard after successful publish
+          setTimeout(() => {
+            onBack();
+          }, 1500);
+        }
+      }
+    } catch (err: unknown) {
+      console.error('Publish failed:', err);
+      setSaveStatus('error');
+      
+      const errorResponse = err as { 
+        response?: { 
+          data?: { message?: string }; 
+          status?: number 
+        } 
+      };
+      
+      let errorMessage = 'Failed to publish flow';
+      
+      if (errorResponse.response?.data?.message) {
+        errorMessage = errorResponse.response.data.message;
+      } else if (errorResponse.response?.status === 400) {
+        errorMessage = 'Flow validation failed. Make sure you have at least one trigger configured.';
+      }
+      
+      toast.error(errorMessage);
+    }
+  };
+
   const handleSelectTrigger = (stepId: string) => {
     addNodeByStepId(stepId);
     setShowTriggerModal(false);
@@ -527,10 +609,26 @@ return (
               Preview
               <span className="text-slate-400">▾</span>
             </button>
-            <button className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold">
-              <Play className="w-4 h-4 fill-current" />
-              Set Live
+            
+            {/* UPDATED: Set Live Button with Publish Handler */}
+            <button 
+              onClick={handlePublish}
+              disabled={saveStatus === 'saving'}
+              className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            >
+              {saveStatus === 'saving' ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Publishing...
+                </>
+              ) : (
+                <>
+                  <Play className="w-4 h-4 fill-current" />
+                  Set Live
+                </>
+              )}
             </button>
+            
             <button className="p-2 rounded-lg text-slate-400 hover:bg-slate-100">
               <MoreVertical className="w-5 h-5" />
             </button>
@@ -600,7 +698,6 @@ return (
         <button
           type="button"
           onClick={() => setSidebarOpen((open) => !open)}
-          // Dynamically position the button based on sidebar state (left-64 vs left-0)
           className={`absolute top-24 z-30 w-6 h-10 rounded-r-full bg-white border border-l-0 border-slate-200 shadow-md flex items-center justify-center text-slate-500 hover:bg-slate-50 hover:text-indigo-600 transition-all duration-300 ease-out focus:outline-none ${
             sidebarOpen ? 'left-64' : 'left-0'
           }`}
