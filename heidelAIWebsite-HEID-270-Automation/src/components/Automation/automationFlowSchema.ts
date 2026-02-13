@@ -8,6 +8,7 @@ export type TriggerTypeEnum = 'manual' | 'webhook' | 'schedule' | 'event' | 'ins
 
 export interface AutomationFlowDetails {
   id?: string;
+  _id?: string;
   name: string;
   description?: string;
   flow_data: FlowDocument;
@@ -54,7 +55,7 @@ export function buildFlowDetails(
   const triggerType = inferTriggerType(nodes);
 
   return {
-    id: flowId,
+    _id: flowId,
     name: flowName,
     description: options.description ?? undefined,
     flow_data: flowDocument,
