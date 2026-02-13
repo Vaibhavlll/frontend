@@ -1,33 +1,19 @@
 import React, { useState, useEffect } from "react";
-import {
-  Plus,
-  Search,
-  Filter,
-  MoreVertical,
-  Play,
-  Pause,
-  Trash2,
-  Copy,
-  Calendar,
-  Clock,
-  Zap,
-  Users,
-  Archive,
-  Download,
-  Loader2,
-} from "lucide-react";
+import { Plus, Search, Filter, MoreVertical, Play, Pause, Trash2, Copy, Calendar, Clock, Zap, Users, Archive, Loader2 } from 'lucide-react';
 import { useApi } from "@/lib/session_api";
 import { toast } from "sonner";
 
 interface AutomationFlow {
-  _id: string;
-  id: string;
+  _id?: string;          // MongoDB ID
+  flow_id: string;       // Custom flow ID (this is what backend uses!)
   name: string;
-  status: "draft" | "live" | "archived";
+  status: 'draft' | 'published' | 'archived';  // Note: backend uses 'published' not 'live'
+  description?: string;
   trigger_count?: number;
   last_run?: string;
   created_at?: string;
   updated_at?: string;
+  flow_data?: any;
 }
 
 interface DashboardViewProps {
@@ -35,27 +21,18 @@ interface DashboardViewProps {
   onEditFlow: (flowId: string, flowName: string) => void;
 }
 
-export default function DashboardView({
-  onCreateNew,
-  onEditFlow,
-}: DashboardViewProps) {
+export default function DashboardView({ onCreateNew, onEditFlow }: DashboardViewProps) {
   const api = useApi();
   const [flows, setFlows] = useState<AutomationFlow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [filterStatus, setFilterStatus] = useState<
-    "all" | "draft" | "live" | "archived"
-  >("all");
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'draft' | 'published' | 'archived'>('all');
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
-
+  
   // Delete modal state
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [flowToDelete, setFlowToDelete] = useState<AutomationFlow | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
-
-  const getFlowId = (flow: AutomationFlow): string => {
-    return flow.id || flow._id || "";
-  };
 
   // Fetch flows on mount
   useEffect(() => {
@@ -65,40 +42,42 @@ export default function DashboardView({
   const fetchFlows = async () => {
     setLoading(true);
     try {
-      const response = await api.get("/api/automation_flows");
-
-      console.log("🔍 API Response:", response.data); // DEBUG
-
+      const response = await api.get('/api/automation_flows');
+      
+      console.log('🔍 RAW API RESPONSE:', response.data);
+      
+      // Handle different response formats
       let flowsData: AutomationFlow[] = [];
-
+      
       if (Array.isArray(response.data)) {
         flowsData = response.data;
-      } else if (response.data?.flows) {
+      } else if (response.data?.flows && Array.isArray(response.data.flows)) {
         flowsData = response.data.flows;
-      } else if (response.data?.data) {
+      } else if (response.data?.data && Array.isArray(response.data.data)) {
         flowsData = response.data.data;
       }
-
-      // Normalize: ensure each flow has an 'id' field
-      flowsData = flowsData.map((flow) => ({
-        ...flow,
-        id: flow.id || flow._id || "",
-      }));
-
-      console.log("✅ Normalized flows:", flowsData); // DEBUG
+      
+      console.log('✅ Fetched flows:', flowsData.length);
+      flowsData.forEach((flow, index) => {
+        console.log(`  Flow ${index + 1}:`, {
+          flow_id: flow.flow_id,
+          _id: flow._id,
+          name: flow.name,
+          status: flow.status
+        });
+      });
+      
       setFlows(flowsData);
     } catch (error) {
-      console.error("❌ Failed to fetch flows:", error);
-      toast.error("Failed to load automations");
+      console.error('❌ Failed to fetch flows:', error);
+      toast.error('Failed to load automations');
       setFlows([]);
     } finally {
       setLoading(false);
     }
   };
 
-  // ============================================================================
-  // NEW: DELETE FLOW HANDLER
-  // ============================================================================
+  // DELETE handler with correct flow_id field
   const handleDeleteClick = (flow: AutomationFlow) => {
     setFlowToDelete(flow);
     setShowDeleteModal(true);
@@ -107,53 +86,54 @@ export default function DashboardView({
   const handleDeleteSubmit = async () => {
     if (!flowToDelete) return;
 
-    const flowId = getFlowId(flowToDelete);
-
+    // IMPORTANT: Backend uses flow_id field, not _id!
+    const flowId = flowToDelete.flow_id;
+    
     if (!flowId) {
-      toast.error("Invalid flow ID");
+      toast.error('Invalid flow ID');
       setIsDeleting(false);
       return;
     }
 
-    console.log("🗑️ Deleting flow with ID:", flowId); // DEBUG
+    console.log('🗑️ Deleting flow with flow_id:', flowId);
 
     setIsDeleting(true);
     try {
       const response = await api.delete(`/api/automation_flows/${flowId}`);
-
+      
       if (response.status === 200 || response.status === 204) {
-        // Remove from local state using the same ID
-        setFlows((prevFlows) =>
-          prevFlows.filter((f) => getFlowId(f) !== flowId),
-        );
-
-        toast.success("Flow deleted successfully", {
+        // Remove from local state
+        setFlows((prevFlows) => prevFlows.filter((f) => f.flow_id !== flowId));
+        
+        toast.success('Flow deleted successfully', {
           description: `"${flowToDelete.name}" has been removed.`,
         });
-
+        
         setShowDeleteModal(false);
         setFlowToDelete(null);
       }
     } catch (error: unknown) {
-      console.error("❌ Delete failed:", error);
-
-      const errorResponse = error as {
-        response?: {
-          data?: { message?: string };
-          status?: number;
-        };
+      console.error('❌ Delete failed:', error);
+      
+      const errorResponse = error as { 
+        response?: { 
+          data?: { message?: string; detail?: string }; 
+          status?: number 
+        } 
       };
-
-      let errorMessage = "Failed to delete flow";
-
-      if (errorResponse.response?.data?.message) {
+      
+      let errorMessage = 'Failed to delete flow';
+      
+      if (errorResponse.response?.data?.detail) {
+        errorMessage = errorResponse.response.data.detail;
+      } else if (errorResponse.response?.data?.message) {
         errorMessage = errorResponse.response.data.message;
       } else if (errorResponse.response?.status === 404) {
-        errorMessage = "Flow not found. It may have been already deleted.";
+        errorMessage = 'Flow not found. It may have been already deleted.';
       } else if (errorResponse.response?.status === 403) {
-        errorMessage = "You do not have permission to delete this flow";
+        errorMessage = 'You do not have permission to delete this flow';
       }
-
+      
       toast.error(errorMessage);
     } finally {
       setIsDeleting(false);
@@ -165,147 +145,136 @@ export default function DashboardView({
     setFlowToDelete(null);
   };
 
-  // ============================================================================
-  // NEW: UNPUBLISH FLOW HANDLER
-  // ============================================================================
+  // UNPUBLISH handler
   const handleUnpublish = async (flow: AutomationFlow) => {
-    const flowId = getFlowId(flow);
-
+    const flowId = flow.flow_id;
+    
     if (!flowId) {
-      toast.error("Invalid flow ID");
+      toast.error('Invalid flow ID');
       return;
     }
 
-    console.log("⏸️ Unpublishing flow with ID:", flowId); // DEBUG
+    console.log('⏸️ Unpublishing flow with flow_id:', flowId);
 
     try {
-      const response = await api.post(
-        `/api/automation_flows/${flowId}/unpublish`,
-      );
-
+      const response = await api.post(`/api/automation_flows/${flowId}/unpublish`);
+      
       if (response.status === 200) {
-        // Update local state using the correct ID
+        // Update local state
         setFlows((prevFlows) =>
           prevFlows.map((f) =>
-            getFlowId(f) === flowId ? { ...f, status: "draft" as const } : f,
-          ),
+            f.flow_id === flowId ? { ...f, status: 'draft' as const } : f
+          )
         );
-
-        toast.success("Flow unpublished successfully", {
+        
+        toast.success('Flow unpublished successfully', {
           description: `"${flow.name}" is now in draft mode.`,
         });
       }
     } catch (error: unknown) {
-      console.error("❌ Unpublish failed:", error);
-
-      const errorResponse = error as {
-        response?: {
-          data?: { message?: string };
-          status?: number;
-        };
+      console.error('❌ Unpublish failed:', error);
+      
+      const errorResponse = error as { 
+        response?: { 
+          data?: { message?: string; detail?: string }; 
+          status?: number 
+        } 
       };
-
-      let errorMessage = "Failed to unpublish flow";
-
-      if (errorResponse.response?.data?.message) {
+      
+      let errorMessage = 'Failed to unpublish flow';
+      
+      if (errorResponse.response?.data?.detail) {
+        errorMessage = errorResponse.response.data.detail;
+      } else if (errorResponse.response?.data?.message) {
         errorMessage = errorResponse.response.data.message;
       } else if (errorResponse.response?.status === 404) {
-        errorMessage = "Flow not found";
+        errorMessage = 'Flow not found';
       } else if (errorResponse.response?.status === 400) {
-        errorMessage = "Flow is already in draft mode";
+        errorMessage = 'Flow is already in draft mode';
       }
-
+      
       toast.error(errorMessage);
     }
   };
 
-  // Duplicate flow handler
+  // Duplicate handler
   const handleDuplicate = async (flow: AutomationFlow) => {
-    const flowId = getFlowId(flow);
-
+    const flowId = flow.flow_id;
+    
     if (!flowId) {
-      toast.error("Invalid flow ID");
+      toast.error('Invalid flow ID');
       return;
     }
 
-    console.log("📋 Duplicating flow with ID:", flowId); // DEBUG
+    console.log('📋 Duplicating flow with flow_id:', flowId);
 
     try {
       const response = await api.get(`/api/automation_flows/${flowId}`);
       const flowData = response.data;
-
+      
       const duplicateData = {
-        ...flowData,
         name: `${flow.name} (Copy)`,
-        status: "draft",
+        description: flowData.description || '',
+        flow_data: flowData.flow_data,
+        status: 'draft',
       };
-
-      // Remove both id and _id
-      delete duplicateData.id;
-      delete duplicateData._id;
-
-      const createResponse = await api.post(
-        "/api/automation_flows",
-        duplicateData,
-      );
-
+      
+      const createResponse = await api.post('/api/automation_flows', duplicateData);
+      
       if (createResponse.status === 201 || createResponse.status === 200) {
-        toast.success("Flow duplicated successfully");
+        toast.success('Flow duplicated successfully');
         fetchFlows(); // Refresh the list
       }
     } catch (error) {
-      console.error("❌ Duplicate failed:", error);
-      toast.error("Failed to duplicate flow");
+      console.error('❌ Duplicate failed:', error);
+      toast.error('Failed to duplicate flow');
     }
   };
 
-  // Archive flow handler
+  // Archive handler
   const handleArchive = async (flow: AutomationFlow) => {
-    const flowId = getFlowId(flow);
-
+    const flowId = flow.flow_id;
+    
     if (!flowId) {
-      toast.error("Invalid flow ID");
+      toast.error('Invalid flow ID');
       return;
     }
 
-    console.log("📦 Archiving flow with ID:", flowId); // DEBUG
+    console.log('📦 Archiving flow with flow_id:', flowId);
 
     try {
       const response = await api.patch(`/api/automation_flows/${flowId}`, {
-        status: "archived",
+        status: 'archived',
       });
-
+      
       if (response.status === 200) {
         setFlows((prevFlows) =>
           prevFlows.map((f) =>
-            getFlowId(f) === flowId ? { ...f, status: "archived" as const } : f,
-          ),
+            f.flow_id === flowId ? { ...f, status: 'archived' as const } : f
+          )
         );
-
-        toast.success("Flow archived successfully");
+        
+        toast.success('Flow archived successfully');
       }
     } catch (error) {
-      console.error("❌ Archive failed:", error);
-      toast.error("Failed to archive flow");
+      console.error('❌ Archive failed:', error);
+      toast.error('Failed to archive flow');
     }
   };
 
   // Filter and search flows
   const filteredFlows = flows.filter((flow) => {
-    const matchesSearch = flow.name
-      .toLowerCase()
-      .includes(searchQuery.toLowerCase());
-    const matchesFilter =
-      filterStatus === "all" || flow.status === filterStatus;
+    const matchesSearch = flow.name.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesFilter = filterStatus === 'all' || flow.status === filterStatus;
     return matchesSearch && matchesFilter;
   });
 
-  // Stats calculation
+  // Stats calculation (convert 'published' to 'live' for display)
   const stats = {
     total: flows.length,
-    live: flows.filter((f) => f.status === "live").length,
-    draft: flows.filter((f) => f.status === "draft").length,
-    archived: flows.filter((f) => f.status === "archived").length,
+    live: flows.filter((f) => f.status === 'published').length,
+    draft: flows.filter((f) => f.status === 'draft').length,
+    archived: flows.filter((f) => f.status === 'archived').length,
   };
 
   return (
@@ -314,12 +283,8 @@ export default function DashboardView({
       <div className="bg-white border-b border-slate-200 px-8 py-6 shadow-sm">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-3xl font-bold text-slate-900 mb-1">
-              Automations
-            </h1>
-            <p className="text-sm text-slate-600">
-              Create and manage your automation workflows
-            </p>
+            <h1 className="text-3xl font-bold text-slate-900 mb-1">Automations</h1>
+            <p className="text-sm text-slate-600">Create and manage your automation workflows</p>
           </div>
           <button
             onClick={onCreateNew}
@@ -334,44 +299,34 @@ export default function DashboardView({
         <div className="grid grid-cols-4 gap-4">
           <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4 border border-blue-200">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-blue-700 uppercase tracking-wide">
-                Total
-              </span>
+              <span className="text-xs font-bold text-blue-700 uppercase tracking-wide">Total</span>
               <Zap className="w-4 h-4 text-blue-600" />
             </div>
             <p className="text-2xl font-bold text-blue-900">{stats.total}</p>
           </div>
-
+          
           <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-xl p-4 border border-emerald-200">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-emerald-700 uppercase tracking-wide">
-                Live
-              </span>
+              <span className="text-xs font-bold text-emerald-700 uppercase tracking-wide">Live</span>
               <Play className="w-4 h-4 text-emerald-600 fill-current" />
             </div>
             <p className="text-2xl font-bold text-emerald-900">{stats.live}</p>
           </div>
-
+          
           <div className="bg-gradient-to-br from-amber-50 to-amber-100 rounded-xl p-4 border border-amber-200">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-amber-700 uppercase tracking-wide">
-                Draft
-              </span>
+              <span className="text-xs font-bold text-amber-700 uppercase tracking-wide">Draft</span>
               <Pause className="w-4 h-4 text-amber-600" />
             </div>
             <p className="text-2xl font-bold text-amber-900">{stats.draft}</p>
           </div>
-
+          
           <div className="bg-gradient-to-br from-slate-50 to-slate-100 rounded-xl p-4 border border-slate-200">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">
-                Archived
-              </span>
+              <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">Archived</span>
               <Archive className="w-4 h-4 text-slate-600" />
             </div>
-            <p className="text-2xl font-bold text-slate-900">
-              {stats.archived}
-            </p>
+            <p className="text-2xl font-bold text-slate-900">{stats.archived}</p>
           </div>
         </div>
       </div>
@@ -389,32 +344,28 @@ export default function DashboardView({
               className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
             />
           </div>
-
+          
           <div className="relative">
             <button
               onClick={() => setShowFilterDropdown(!showFilterDropdown)}
               className="flex items-center gap-2 px-4 py-2.5 border border-slate-200 rounded-xl hover:bg-slate-50 text-sm font-medium text-slate-700 transition-colors"
             >
               <Filter className="w-4 h-4" />
-              {filterStatus === "all"
-                ? "All Flows"
-                : filterStatus.charAt(0).toUpperCase() + filterStatus.slice(1)}
+              {filterStatus === 'all' ? 'All Flows' : filterStatus.charAt(0).toUpperCase() + filterStatus.slice(1)}
             </button>
-
+            
             {showFilterDropdown && (
               <div className="absolute right-0 mt-2 w-48 bg-white border border-slate-200 rounded-xl shadow-lg z-10 overflow-hidden">
-                {["all", "live", "draft", "archived"].map((status) => (
+                {(['all', 'published', 'draft', 'archived'] as const).map((status) => (
                   <button
                     key={status}
                     onClick={() => {
-                      setFilterStatus(status as typeof filterStatus);
+                      setFilterStatus(status);
                       setShowFilterDropdown(false);
                     }}
                     className="w-full text-left px-4 py-2.5 hover:bg-slate-50 text-sm font-medium text-slate-700 transition-colors"
                   >
-                    {status === "all"
-                      ? "All Flows"
-                      : status.charAt(0).toUpperCase() + status.slice(1)}
+                    {status === 'all' ? 'All Flows' : status === 'published' ? 'Live' : status.charAt(0).toUpperCase() + status.slice(1)}
                   </button>
                 ))}
               </div>
@@ -435,16 +386,14 @@ export default function DashboardView({
               <Zap className="w-8 h-8 text-slate-400" />
             </div>
             <h3 className="text-lg font-semibold text-slate-700 mb-2">
-              {searchQuery || filterStatus !== "all"
-                ? "No flows found"
-                : "No automations yet"}
+              {searchQuery || filterStatus !== 'all' ? 'No flows found' : 'No automations yet'}
             </h3>
             <p className="text-sm text-slate-500 max-w-md mb-6">
-              {searchQuery || filterStatus !== "all"
-                ? "Try adjusting your search or filters"
-                : "Create your first automation to get started"}
+              {searchQuery || filterStatus !== 'all' 
+                ? 'Try adjusting your search or filters'
+                : 'Create your first automation to get started'}
             </p>
-            {!searchQuery && filterStatus === "all" && (
+            {!searchQuery && filterStatus === 'all' && (
               <button
                 onClick={onCreateNew}
                 className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-semibold text-sm transition-all"
@@ -458,9 +407,9 @@ export default function DashboardView({
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredFlows.map((flow) => (
               <FlowCard
-                key={getFlowId(flow)}
+                key={flow.flow_id}
                 flow={flow}
-                onEdit={() => onEditFlow(getFlowId(flow), flow.name)}
+                onEdit={() => onEditFlow(flow.flow_id, flow.name)}
                 onDelete={() => handleDeleteClick(flow)}
                 onDuplicate={() => handleDuplicate(flow)}
                 onArchive={() => handleArchive(flow)}
@@ -471,9 +420,7 @@ export default function DashboardView({
         )}
       </div>
 
-      {/* ============================================================================ */}
-      {/* NEW: DELETE CONFIRMATION MODAL */}
-      {/* ============================================================================ */}
+      {/* Delete Confirmation Modal */}
       {showDeleteModal && flowToDelete && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 animate-in fade-in zoom-in duration-200">
@@ -482,40 +429,26 @@ export default function DashboardView({
                 <Trash2 className="w-6 h-6 text-red-600" />
               </div>
               <div className="flex-1">
-                <h3 className="text-xl font-bold text-slate-900 mb-2">
-                  Delete Automation?
-                </h3>
+                <h3 className="text-xl font-bold text-slate-900 mb-2">Delete Automation?</h3>
                 <p className="text-sm text-slate-600">
-                  Are you sure you want to delete{" "}
-                  <span className="font-semibold">"{flowToDelete.name}"</span>?
+                  Are you sure you want to delete <span className="font-semibold">"{flowToDelete.name}"</span>? 
                   This action cannot be undone.
                 </p>
               </div>
             </div>
 
-            {flowToDelete.status === "live" && (
+            {flowToDelete.status === 'published' && (
               <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl">
                 <div className="flex items-start gap-3">
                   <div className="w-5 h-5 shrink-0">
-                    <svg
-                      className="w-5 h-5 text-amber-600"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
-                        clipRule="evenodd"
-                      />
+                    <svg className="w-5 h-5 text-amber-600" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
                     </svg>
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-amber-900 mb-1">
-                      Warning: Flow is Live
-                    </p>
+                    <p className="text-sm font-semibold text-amber-900 mb-1">Warning: Flow is Live</p>
                     <p className="text-xs text-amber-700">
-                      This automation is currently active. Deleting it will
-                      immediately stop all triggers and scheduled actions.
+                      This automation is currently active. Deleting it will immediately stop all triggers and scheduled actions.
                     </p>
                   </div>
                 </div>
@@ -555,9 +488,7 @@ export default function DashboardView({
   );
 }
 
-// ============================================================================
-// FLOW CARD COMPONENT (Updated with new actions)
-// ============================================================================
+// FlowCard Component
 interface FlowCardProps {
   flow: AutomationFlow;
   onEdit: () => void;
@@ -567,32 +498,25 @@ interface FlowCardProps {
   onUnpublish: () => void;
 }
 
-function FlowCard({
-  flow,
-  onEdit,
-  onDelete,
-  onDuplicate,
-  onArchive,
-  onUnpublish,
-}: FlowCardProps) {
+function FlowCard({ flow, onEdit, onDelete, onDuplicate, onArchive, onUnpublish }: FlowCardProps) {
   const [showMenu, setShowMenu] = useState(false);
 
   const getStatusBadge = () => {
     switch (flow.status) {
-      case "live":
+      case 'published':
         return (
           <span className="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-700 text-[10px] font-bold uppercase tracking-wide flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
             Live
           </span>
         );
-      case "draft":
+      case 'draft':
         return (
           <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-600 text-[10px] font-bold uppercase tracking-wide">
             Draft
           </span>
         );
-      case "archived":
+      case 'archived':
         return (
           <span className="px-2.5 py-1 rounded-lg bg-red-100 text-red-700 text-[10px] font-bold uppercase tracking-wide">
             Archived
@@ -604,7 +528,7 @@ function FlowCard({
   };
 
   const formatDate = (dateString?: string) => {
-    if (!dateString) return "Never";
+    if (!dateString) return 'Never';
     const date = new Date(dateString);
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
@@ -612,7 +536,7 @@ function FlowCard({
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return "Just now";
+    if (diffMins < 1) return 'Just now';
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 7) return `${diffDays}d ago`;
@@ -632,7 +556,7 @@ function FlowCard({
               <span>Created {formatDate(flow.created_at)}</span>
             </div>
           </div>
-
+          
           <div className="flex items-center gap-2">
             {getStatusBadge()}
             <div className="relative">
@@ -645,7 +569,7 @@ function FlowCard({
               >
                 <MoreVertical className="w-5 h-5" />
               </button>
-
+              
               {showMenu && (
                 <>
                   <div
@@ -667,8 +591,8 @@ function FlowCard({
                       <Play className="w-4 h-4" />
                       Edit Flow
                     </button>
-
-                    {flow.status === "live" && (
+                    
+                    {flow.status === 'published' && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -681,7 +605,7 @@ function FlowCard({
                         Unpublish
                       </button>
                     )}
-
+                    
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -693,8 +617,8 @@ function FlowCard({
                       <Copy className="w-4 h-4" />
                       Duplicate
                     </button>
-
-                    {flow.status !== "archived" && (
+                    
+                    {flow.status !== 'archived' && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -707,9 +631,9 @@ function FlowCard({
                         Archive
                       </button>
                     )}
-
+                    
                     <div className="border-t border-slate-100" />
-
+                    
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -732,25 +656,17 @@ function FlowCard({
           <div className="bg-slate-50 rounded-xl p-3">
             <div className="flex items-center gap-2 mb-1">
               <Zap className="w-3.5 h-3.5 text-slate-500" />
-              <span className="text-xs font-semibold text-slate-600">
-                Triggers
-              </span>
+              <span className="text-xs font-semibold text-slate-600">Triggers</span>
             </div>
-            <p className="text-lg font-bold text-slate-900">
-              {flow.trigger_count || 0}
-            </p>
+            <p className="text-lg font-bold text-slate-900">{flow.trigger_count || 0}</p>
           </div>
-
+          
           <div className="bg-slate-50 rounded-xl p-3">
             <div className="flex items-center gap-2 mb-1">
               <Clock className="w-3.5 h-3.5 text-slate-500" />
-              <span className="text-xs font-semibold text-slate-600">
-                Last Run
-              </span>
+              <span className="text-xs font-semibold text-slate-600">Last Run</span>
             </div>
-            <p className="text-xs font-bold text-slate-900 truncate">
-              {formatDate(flow.last_run)}
-            </p>
+            <p className="text-xs font-bold text-slate-900 truncate">{formatDate(flow.last_run)}</p>
           </div>
         </div>
       </div>
