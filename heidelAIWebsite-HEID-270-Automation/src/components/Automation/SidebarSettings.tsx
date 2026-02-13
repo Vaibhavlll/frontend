@@ -49,7 +49,7 @@ export default function SidebarSettings({ node, onClose, onUpdateNode }: Sidebar
     loadTriggerPosts();
   }, [node?.id, node?.type]);
 
-  // Fetch Instagram media from IndexedDB 
+  // Fetch Instagram media from IndexedDB for action nodes
   useEffect(() => {
     if (!node || node.app !== 'instagram' || !showMediaPicker) return;
     const load = async () => {
@@ -79,6 +79,10 @@ export default function SidebarSettings({ node, onClose, onUpdateNode }: Sidebar
   const isCondition = node.type === 'logic' && node.data?.logicType === 'condition';
   const isActionsPanel = node.label === 'Actions' || node.data?.logicType === 'actions';
   const isActionsNode = node.type === 'action' && (node.data?.actionType === 'add_tag' || node.data?.actionType === 'set_field' || node.data?.actionType === 'api');
+  
+  // NEW: Check for reply_to_comment and send_dm action types
+  const isReplyToComment = node.type === 'action' && node.data?.actionType === 'reply_to_comment';
+  const isSendDm = node.type === 'action' && node.data?.actionType === 'send_dm';
 
   const headerBg = isSendMessage ? 'bg-purple-100' : isCondition ? 'bg-teal-100' : (isActionsPanel || isActionsNode) ? 'bg-amber-100' : 'bg-slate-100';
   const headerText = isSendMessage ? 'text-purple-900' : isCondition ? 'text-teal-900' : (isActionsPanel || isActionsNode) ? 'text-amber-900' : 'text-slate-800';
@@ -101,8 +105,253 @@ export default function SidebarSettings({ node, onClose, onUpdateNode }: Sidebar
 
       {/* Sidebar Content */}
       <div className="flex-1 overflow-y-auto p-5 space-y-6">
+        
+        {/* ============================================================================ */}
+        {/* INSTAGRAM POST SELECTOR FOR TRIGGERS */}
+        {/* ============================================================================ */}
+        {node.type === 'trigger' && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Info className="w-4 h-4 text-blue-500" />
+              <h4 className="text-xs font-bold text-slate-800 uppercase">Select Instagram Post</h4>
+            </div>
+            {loadingTriggerPosts ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+              </div>
+            ) : triggerPosts.length === 0 ? (
+              <div className="p-4 rounded-lg border border-slate-200 bg-slate-50 text-center">
+                <p className="text-xs text-slate-500">
+                  No Instagram posts available. Connect Instagram in Settings first.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 gap-2 max-h-64 overflow-y-auto">
+                {triggerPosts.map((post) => {
+                  const isSelected = node.data?.triggerConfig?.post_id === post.id;
+                  return (
+                    <button
+                      key={post.id}
+                      type="button"
+                      onClick={() => {
+                        update({
+                          triggerConfig: {
+                            ...node.data?.triggerConfig,
+                            post_id: isSelected ? undefined : post.id,
+                          },
+                          triggerSubtitle: isSelected ? undefined : `Post: ${post.caption?.substring(0, 30)}...`
+                        });
+                      }}
+                      className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-all ${
+                        isSelected
+                          ? 'border-blue-500 ring-2 ring-blue-200'
+                          : 'border-slate-200 hover:border-blue-300'
+                      }`}
+                    >
+                      <img
+                        src={
+                          post.media_type === 'VIDEO'
+                            ? post.thumbnail_url || post.media_url
+                            : post.media_url
+                        }
+                        alt={post.caption || 'Post'}
+                        className="w-full h-full object-cover"
+                      />
+                      {isSelected && (
+                        <div className="absolute inset-0 bg-blue-500/20 flex items-center justify-center">
+                          <div className="w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center">
+                            <span className="text-white text-xs">✓</span>
+                          </div>
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            
+            {/* Keywords for triggers */}
+            {node.data?.triggerType !== 'instagram_ads' && (
+              <div className="mt-4">
+                <label className="text-xs font-medium text-slate-600 block mb-2">
+                  Keywords (optional, comma-separated)
+                </label>
+                <input
+                  type="text"
+                  value={(node.data?.triggerConfig?.keywords ?? []).join(', ')}
+                  onChange={(e) =>
+                    update({
+                      triggerConfig: {
+                        ...node.data?.triggerConfig,
+                        keywords: e.target.value.split(',').map((k) => k.trim()).filter(Boolean),
+                      },
+                    })
+                  }
+                  placeholder="e.g. price, discount, info"
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  Trigger only when comment contains these keywords
+                </p>
+              </div>
+            )}
+            <hr className="border-slate-100" />
+          </div>
+        )}
+
+        {/* ============================================================================ */}
+        {/* REPLY TO COMMENT ACTION */}
+        {/* ============================================================================ */}
+        {isReplyToComment && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Info className="w-4 h-4 text-purple-500" />
+              <h4 className="text-xs font-bold text-slate-800 uppercase">Reply to Comment</h4>
+            </div>
+            <p className="text-xs text-slate-600">
+              This action will reply directly to the Instagram comment that triggered the automation.
+            </p>
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-slate-500 block">Reply Text</label>
+              <textarea
+                className="w-full h-32 px-4 py-3 text-sm text-slate-700 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 resize-none transition-all"
+                placeholder="Thank you for your comment! We'll get back to you soon..."
+                value={node.data?.text ?? ''}
+                onChange={(e) => update({ text: e.target.value })}
+              />
+              <p className="text-xs text-slate-500">
+                This message will appear as a reply under the comment
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================================ */}
+        {/* SEND DM ACTION */}
+        {/* ============================================================================ */}
+        {isSendDm && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Info className="w-4 h-4 text-purple-500" />
+              <h4 className="text-xs font-bold text-slate-800 uppercase">Send Direct Message</h4>
+            </div>
+            <p className="text-xs text-slate-600">
+              Send a private message to the user's Instagram inbox.
+            </p>
+            
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-slate-500 block">Message Text</label>
+              <textarea
+                className="w-full h-32 px-4 py-3 text-sm text-slate-700 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 resize-none transition-all"
+                placeholder="Hi! Thanks for reaching out..."
+                value={node.data?.text ?? ''}
+                onChange={(e) => update({ text: e.target.value })}
+              />
+            </div>
+
+            {/* Optional link button */}
+            {/* <div className="p-3 bg-blue-50 rounded-lg border border-blue-100">
+              <label className="flex items-center gap-2 text-xs font-medium text-slate-700 mb-2">
+                <input
+                  type="checkbox"
+                  checked={node.data?.includeButton ?? false}
+                  onChange={(e) => update({ includeButton: e.target.checked })}
+                  className="rounded"
+                />
+                Include a button link
+              </label>
+              
+              {node.data?.includeButton && (
+                <div className="space-y-2 mt-2">
+                  <input
+                    type="text"
+                    value={(node.data?.buttonTitle as string) ?? ''}
+                    onChange={(e) => update({ buttonTitle: e.target.value })}
+                    placeholder="Button text (e.g. Visit Website)"
+                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
+                  <input
+                    type="url"
+                    value={(node.data?.linkUrl as string) ?? ''}
+                    onChange={(e) => update({ linkUrl: e.target.value })}
+                    placeholder="https://your-website.com"
+                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
+                </div>
+              )}
+            </div> */}
+
+            {/* Instagram media picker */}
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-slate-500 block">Media (optional)</label>
+              {node.data?.media_url ? (
+                <div className="flex items-center gap-2 p-2 bg-slate-50 rounded-lg border border-slate-200">
+                  <img
+                    src={node.data.media_url}
+                    alt="Selected"
+                    className="w-12 h-12 object-cover rounded"
+                  />
+                  <span className="text-xs text-slate-600 truncate flex-1">Image attached</span>
+                  <button
+                    type="button"
+                    onClick={() => update({ media_url: null })}
+                    className="text-xs font-bold text-rose-500 hover:text-rose-600"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setShowMediaPicker((v) => !v)}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-lg hover:border-slate-300 hover:bg-slate-50 transition-all"
+              >
+                <ImageIcon className="w-4 h-4" />
+                {showMediaPicker ? 'Hide Instagram media' : 'Pick from Instagram'}
+              </button>
+              {showMediaPicker && (
+                <div className="border border-slate-200 rounded-xl p-3 bg-slate-50 max-h-48 overflow-y-auto">
+                  {loadingMedia ? (
+                    <div className="flex justify-center py-4">
+                      <Loader2 className="w-6 h-6 animate-spin text-indigo-500" />
+                    </div>
+                  ) : instagramPosts.length === 0 ? (
+                    <p className="text-xs text-slate-500 text-center py-2">
+                      No Instagram posts in Settings. Connect Instagram in Settings first.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-2">
+                      {instagramPosts.map((post) => (
+                        <button
+                          key={post.id}
+                          type="button"
+                          onClick={() => {
+                            update({ media_url: post.media_url });
+                            setShowMediaPicker(false);
+                          }}
+                          className="aspect-square rounded-lg overflow-hidden border-2 border-transparent hover:border-indigo-400 focus:border-indigo-400 focus:outline-none"
+                        >
+                          <img
+                            src={
+                              post.media_type === 'VIDEO'
+                                ? post.thumbnail_url || post.media_url
+                                : post.media_url
+                            }
+                            alt={post.caption || 'Post'}
+                            className="w-full h-full object-cover"
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Send Message */}
-        {isSendMessage && (
+        {isSendMessage && !isReplyToComment && !isSendDm && (
           <>
             <p className="text-sm text-slate-700">
               Send as{' '}
@@ -203,8 +452,8 @@ export default function SidebarSettings({ node, onClose, onUpdateNode }: Sidebar
           </>
         )}
 
-        {/* Generic / other nodes – keep existing config */}
-        {!isSendMessage && !isCondition && !isActionsPanel && (
+        {/* Generic / other nodes */}
+        {!isSendMessage && !isCondition && !isActionsPanel && !isReplyToComment && !isSendDm && (
         <>
         <div className="space-y-2">
           <label className="text-xs font-bold text-slate-700 ml-1">Step Name</label>
@@ -217,70 +466,6 @@ export default function SidebarSettings({ node, onClose, onUpdateNode }: Sidebar
           />
         </div>
         <hr className="border-slate-100" />
-        
-        {/* Instagram Posts for Trigger Nodes */}
-        {node.type === 'trigger' && (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <Info className="w-4 h-4 text-blue-500" />
-              <h4 className="text-xs font-bold text-slate-800 uppercase">Select Post</h4>
-            </div>
-            {loadingTriggerPosts ? (
-              <div className="flex justify-center py-8">
-                <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
-              </div>
-            ) : triggerPosts.length === 0 ? (
-              <div className="p-4 rounded-lg border border-slate-200 bg-slate-50 text-center">
-                <p className="text-xs text-slate-500">
-                  No Instagram posts available. Connect Instagram in Settings first.
-                </p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-3 gap-2 max-h-64 overflow-y-auto">
-                {triggerPosts.map((post) => {
-                  const isSelected = node.data?.triggerConfig?.post_id === post.id;
-                  return (
-                    <button
-                      key={post.id}
-                      type="button"
-                      onClick={() => {
-                        update({
-                          triggerConfig: {
-                            ...node.data?.triggerConfig,
-                            post_id: isSelected ? undefined : post.id,
-                          },
-                        });
-                      }}
-                      className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-all ${
-                        isSelected
-                          ? 'border-blue-500 ring-2 ring-blue-200'
-                          : 'border-slate-200 hover:border-blue-300'
-                      }`}
-                    >
-                      <img
-                        src={
-                          post.media_type === 'VIDEO'
-                            ? post.thumbnail_url || post.media_url
-                            : post.media_url
-                        }
-                        alt={post.caption || 'Post'}
-                        className="w-full h-full object-cover"
-                      />
-                      {isSelected && (
-                        <div className="absolute inset-0 bg-blue-500/20 flex items-center justify-center">
-                          <div className="w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center">
-                            <span className="text-white text-xs">✓</span>
-                          </div>
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-            <hr className="border-slate-100" />
-          </div>
-        )}
         
         <div className="space-y-4">
           <div className="flex items-center gap-2 mb-2">
@@ -297,7 +482,8 @@ export default function SidebarSettings({ node, onClose, onUpdateNode }: Sidebar
                 value={node.data?.text ?? ''}
                 onChange={(e) => update({ text: e.target.value })}
               />
-              {/* Instagram media: same source as Settings (IndexedDB integrations) */}
+              
+              {/* Instagram media picker */}
               <div className="space-y-2">
                 <label className="text-xs font-medium text-slate-500 block">Media (optional)</label>
                 {node.data?.media_url ? (
@@ -381,29 +567,6 @@ export default function SidebarSettings({ node, onClose, onUpdateNode }: Sidebar
                 >
                   + Quick Reply
                 </button>
-              </div>
-            </div>
-          )}
-
-          {node.type === 'trigger' && (
-            <div className="p-4 rounded-xl border border-blue-100 bg-blue-50/50 space-y-3">
-              <p className="text-xs font-medium text-blue-800">Trigger Settings</p>
-              <div className="space-y-2">
-                <label className="text-xs font-medium text-slate-600 block">Keywords (comma-separated)</label>
-                <input
-                  type="text"
-                  value={(node.data?.triggerConfig?.keywords ?? []).join(', ')}
-                  onChange={(e) =>
-                    update({
-                      triggerConfig: {
-                        ...node.data?.triggerConfig,
-                        keywords: e.target.value.split(',').map((k) => k.trim()).filter(Boolean),
-                      },
-                    })
-                  }
-                  placeholder="e.g. price, cost, how much"
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                />
               </div>
             </div>
           )}
