@@ -1,527 +1,775 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from "react";
 import {
   Plus,
   Search,
-  LayoutGrid,
-  List,
-  Trash2,
-  FolderPlus,
-  ChevronsUpDown,
+  Filter,
   MoreVertical,
-  Pencil,
+  Play,
+  Pause,
+  Trash2,
+  Copy,
+  Calendar,
+  Clock,
+  Zap,
+  Users,
+  Archive,
+  Download,
   Loader2,
-} from 'lucide-react';
-import { useApi } from '@/lib/session_api';
-import { toast } from 'sonner';
+} from "lucide-react";
+import { useApi } from "@/lib/session_api";
+import { toast } from "sonner";
 
-export interface AutomationFlow {
+interface AutomationFlow {
+  _id: string;
   id: string;
   name: string;
-  description?: string;
-  status?: string;
-  updated_at?: string;
+  status: "draft" | "live" | "archived";
+  trigger_count?: number;
+  last_run?: string;
   created_at?: string;
-  flow_data?: unknown;
+  updated_at?: string;
 }
 
 interface DashboardViewProps {
-  onOpenAutomation: (id: string, name: string) => void;
+  onCreateNew: () => void;
+  onEditFlow: (flowId: string, flowName: string) => void;
 }
 
-const INSTAGRAM_ICON = (
-  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none">
-    <rect x="2" y="2" width="20" height="20" rx="5" fill="url(#ig-dash)" />
-    <circle cx="12" cy="12" r="4" stroke="white" strokeWidth="2" fill="none" />
-    <circle cx="17.5" cy="6.5" r="1.5" fill="white" />
-    <defs>
-      <linearGradient id="ig-dash" x1="2" y1="22" x2="22" y2="2">
-        <stop offset="0%" stopColor="#FD5949" />
-        <stop offset="50%" stopColor="#D6249F" />
-        <stop offset="100%" stopColor="#285AEB" />
-      </linearGradient>
-    </defs>
-  </svg>
-);
-
-const FLOW_CARD_STORAGE_KEY = 'automation_dashboard_view_grid';
-
-function getStoredGridView(): boolean {
-  if (typeof window === 'undefined') return false;
-  try {
-    const v = localStorage.getItem(FLOW_CARD_STORAGE_KEY);
-    return v === 'true';
-  } catch {
-    return false;
-  }
-}
-
-function setStoredGridView(isGrid: boolean) {
-  try {
-    localStorage.setItem(FLOW_CARD_STORAGE_KEY, String(isGrid));
-  } catch {}
-}
-
-export default function DashboardView({ onOpenAutomation }: DashboardViewProps) {
+export default function DashboardView({
+  onCreateNew,
+  onEditFlow,
+}: DashboardViewProps) {
   const api = useApi();
   const [flows, setFlows] = useState<AutomationFlow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [isGridView, setIsGridView] = useState(getStoredGridView);
-  const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [editModalOpen, setEditModalOpen] = useState(false);
-  const [editingFlow, setEditingFlow] = useState<AutomationFlow | null>(null);
-  const [createName, setCreateName] = useState('');
-  const [createDescription, setCreateDescription] = useState('');
-  const [editName, setEditName] = useState('');
-  const [editDescription, setEditDescription] = useState('');
-  const [createSubmitting, setCreateSubmitting] = useState(false);
-  const [editSubmitting, setEditSubmitting] = useState(false);
-  const [createError, setCreateError] = useState('');
-  const [editError, setEditError] = useState('');
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterStatus, setFilterStatus] = useState<
+    "all" | "draft" | "live" | "archived"
+  >("all");
+  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
 
-  const fetchFlows = useCallback(async () => {
+  // Delete modal state
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [flowToDelete, setFlowToDelete] = useState<AutomationFlow | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const getFlowId = (flow: AutomationFlow): string => {
+    return flow.id || flow._id || "";
+  };
+
+  // Fetch flows on mount
+  useEffect(() => {
+    fetchFlows();
+  }, []);
+
+  const fetchFlows = async () => {
     setLoading(true);
     try {
-      const response = await api.get('/api/automation_flows');
-      const data = response.data;
-      const list = Array.isArray(data) ? data : data?.flows ?? data?.data ?? [];
-      setFlows(Array.isArray(list) ? list : []);
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed to load automations';
-      toast.error(msg);
+      const response = await api.get("/api/automation_flows");
+
+      console.log("🔍 API Response:", response.data); // DEBUG
+
+      let flowsData: AutomationFlow[] = [];
+
+      if (Array.isArray(response.data)) {
+        flowsData = response.data;
+      } else if (response.data?.flows) {
+        flowsData = response.data.flows;
+      } else if (response.data?.data) {
+        flowsData = response.data.data;
+      }
+
+      // Normalize: ensure each flow has an 'id' field
+      flowsData = flowsData.map((flow) => ({
+        ...flow,
+        id: flow.id || flow._id || "",
+      }));
+
+      console.log("✅ Normalized flows:", flowsData); // DEBUG
+      setFlows(flowsData);
+    } catch (error) {
+      console.error("❌ Failed to fetch flows:", error);
+      toast.error("Failed to load automations");
       setFlows([]);
     } finally {
       setLoading(false);
     }
-  }, [api]);
-
-  useEffect(() => {
-    fetchFlows();
-  }, [fetchFlows]);
-
-  const toggleView = () => {
-    const next = !isGridView;
-    setIsGridView(next);
-    setStoredGridView(next);
   };
 
-  const filteredFlows = search.trim()
-    ? flows.filter(
-        (f) =>
-          f.name?.toLowerCase().includes(search.trim().toLowerCase()) ||
-          f.description?.toLowerCase().includes(search.trim().toLowerCase())
-      )
-    : flows;
-
-  //  dummy flow
-  const hasRealFlows = filteredFlows.length > 0;
-  const displayedFlows: AutomationFlow[] = hasRealFlows
-    ? filteredFlows
-    : [
-        {
-          id: 'demo-flow',
-          name: 'Untitled',
-          description: 'Sample automation (demo only)',
-          status: 'draft',
-        },
-      ];
-
-  const openCreateModal = () => {
-    setCreateName('');
-    setCreateDescription('');
-    setCreateError('');
-    setCreateModalOpen(true);
+  // ============================================================================
+  // NEW: DELETE FLOW HANDLER
+  // ============================================================================
+  const handleDeleteClick = (flow: AutomationFlow) => {
+    setFlowToDelete(flow);
+    setShowDeleteModal(true);
   };
 
-  const handleCreateSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const name = createName.trim();
-    if (!name) {
-      setCreateError('Name is required.');
+  const handleDeleteSubmit = async () => {
+    if (!flowToDelete) return;
+
+    const flowId = getFlowId(flowToDelete);
+
+    if (!flowId) {
+      toast.error("Invalid flow ID");
+      setIsDeleting(false);
       return;
     }
-    if (name.length < 3) {
-      setCreateError('Name must be at least 3 characters.');
-      return;
-    }
-    if (name.length > 255) {
-      setCreateError('Name must be at most 255 characters.');
-      return;
-    }
-    if (createDescription.length > 500) {
-      setCreateError('Description must be at most 500 characters.');
-      return;
-    }
-    setCreateSubmitting(true);
-    setCreateError('');
+
+    console.log("🗑️ Deleting flow with ID:", flowId); // DEBUG
+
+    setIsDeleting(true);
     try {
-      const payload = { name, description: createDescription.trim() || undefined };
-      const response = await api.post('/api/automation_flows', payload);
-      const created = response.data?.id != null ? response.data : response.data?.flow ?? response.data;
-      const newId = typeof created?.id === 'string' ? created.id : String(created?.id ?? created?._id ?? '');
-      const newName = created?.name ?? name;
-      if (newId) {
-        setFlows((prev) => [...prev, { id: newId, name: newName, description: createDescription.trim() || undefined }]);
-        setCreateModalOpen(false);
-        onOpenAutomation(newId, newName);
-        toast.success('Automation created');
-      } else {
-        setCreateError('Invalid response from server.');
+      const response = await api.delete(`/api/automation_flows/${flowId}`);
+
+      if (response.status === 200 || response.status === 204) {
+        // Remove from local state using the same ID
+        setFlows((prevFlows) =>
+          prevFlows.filter((f) => getFlowId(f) !== flowId),
+        );
+
+        toast.success("Flow deleted successfully", {
+          description: `"${flowToDelete.name}" has been removed.`,
+        });
+
+        setShowDeleteModal(false);
+        setFlowToDelete(null);
       }
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed to create automation';
-      setCreateError(msg);
-      toast.error(msg);
+    } catch (error: unknown) {
+      console.error("❌ Delete failed:", error);
+
+      const errorResponse = error as {
+        response?: {
+          data?: { message?: string };
+          status?: number;
+        };
+      };
+
+      let errorMessage = "Failed to delete flow";
+
+      if (errorResponse.response?.data?.message) {
+        errorMessage = errorResponse.response.data.message;
+      } else if (errorResponse.response?.status === 404) {
+        errorMessage = "Flow not found. It may have been already deleted.";
+      } else if (errorResponse.response?.status === 403) {
+        errorMessage = "You do not have permission to delete this flow";
+      }
+
+      toast.error(errorMessage);
     } finally {
-      setCreateSubmitting(false);
+      setIsDeleting(false);
     }
   };
 
-  const openEditModal = (flow: AutomationFlow, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setEditingFlow(flow);
-    setEditName(flow.name ?? '');
-    setEditDescription(flow.description ?? '');
-    setEditError('');
-    setEditModalOpen(true);
+  const handleDeleteCancel = () => {
+    setShowDeleteModal(false);
+    setFlowToDelete(null);
   };
 
-  const handleEditSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingFlow?.id) return;
-    const name = editName.trim();
-    if (!name) {
-      setEditError('Name is required.');
+  // ============================================================================
+  // NEW: UNPUBLISH FLOW HANDLER
+  // ============================================================================
+  const handleUnpublish = async (flow: AutomationFlow) => {
+    const flowId = getFlowId(flow);
+
+    if (!flowId) {
+      toast.error("Invalid flow ID");
       return;
     }
-    if (name.length < 3) {
-      setEditError('Name must be at least 3 characters.');
-      return;
-    }
-    if (name.length > 255) {
-      setEditError('Name must be at most 255 characters.');
-      return;
-    }
-    if (editDescription.length > 500) {
-      setEditError('Description must be at most 500 characters.');
-      return;
-    }
-    setEditSubmitting(true);
-    setEditError('');
+
+    console.log("⏸️ Unpublishing flow with ID:", flowId); // DEBUG
+
     try {
-      const payload = { name, description: editDescription.trim() || undefined };
-      await api.patch(`/api/automation_flows/${editingFlow.id}`, payload);
-      setFlows((prev) =>
-        prev.map((f) => (f.id === editingFlow.id ? { ...f, name, description: editDescription.trim() || undefined } : f))
+      const response = await api.post(
+        `/api/automation_flows/${flowId}/unpublish`,
       );
-      setEditModalOpen(false);
-      setEditingFlow(null);
-      toast.success('Automation updated');
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed to update automation';
-      setEditError(msg);
-      toast.error(msg);
-    } finally {
-      setEditSubmitting(false);
+
+      if (response.status === 200) {
+        // Update local state using the correct ID
+        setFlows((prevFlows) =>
+          prevFlows.map((f) =>
+            getFlowId(f) === flowId ? { ...f, status: "draft" as const } : f,
+          ),
+        );
+
+        toast.success("Flow unpublished successfully", {
+          description: `"${flow.name}" is now in draft mode.`,
+        });
+      }
+    } catch (error: unknown) {
+      console.error("❌ Unpublish failed:", error);
+
+      const errorResponse = error as {
+        response?: {
+          data?: { message?: string };
+          status?: number;
+        };
+      };
+
+      let errorMessage = "Failed to unpublish flow";
+
+      if (errorResponse.response?.data?.message) {
+        errorMessage = errorResponse.response.data.message;
+      } else if (errorResponse.response?.status === 404) {
+        errorMessage = "Flow not found";
+      } else if (errorResponse.response?.status === 400) {
+        errorMessage = "Flow is already in draft mode";
+      }
+
+      toast.error(errorMessage);
     }
   };
 
-  const formatDate = (dateStr?: string) => {
-    if (!dateStr) return '—';
-    try {
-      const d = new Date(dateStr);
-      if (isNaN(d.getTime())) return dateStr;
-      const now = new Date();
-      const diffMs = now.getTime() - d.getTime();
-      const diffMins = Math.floor(diffMs / 60000);
-      if (diffMins < 60) return `${diffMins} min ago`;
-      const diffHours = Math.floor(diffMins / 60);
-      if (diffHours < 24) return `${diffHours} hours ago`;
-      const diffDays = Math.floor(diffHours / 24);
-      if (diffDays < 30) return `${diffDays} days ago`;
-      return d.toLocaleDateString();
-    } catch {
-      return dateStr;
+  // Duplicate flow handler
+  const handleDuplicate = async (flow: AutomationFlow) => {
+    const flowId = getFlowId(flow);
+
+    if (!flowId) {
+      toast.error("Invalid flow ID");
+      return;
     }
+
+    console.log("📋 Duplicating flow with ID:", flowId); // DEBUG
+
+    try {
+      const response = await api.get(`/api/automation_flows/${flowId}`);
+      const flowData = response.data;
+
+      const duplicateData = {
+        ...flowData,
+        name: `${flow.name} (Copy)`,
+        status: "draft",
+      };
+
+      // Remove both id and _id
+      delete duplicateData.id;
+      delete duplicateData._id;
+
+      const createResponse = await api.post(
+        "/api/automation_flows",
+        duplicateData,
+      );
+
+      if (createResponse.status === 201 || createResponse.status === 200) {
+        toast.success("Flow duplicated successfully");
+        fetchFlows(); // Refresh the list
+      }
+    } catch (error) {
+      console.error("❌ Duplicate failed:", error);
+      toast.error("Failed to duplicate flow");
+    }
+  };
+
+  // Archive flow handler
+  const handleArchive = async (flow: AutomationFlow) => {
+    const flowId = getFlowId(flow);
+
+    if (!flowId) {
+      toast.error("Invalid flow ID");
+      return;
+    }
+
+    console.log("📦 Archiving flow with ID:", flowId); // DEBUG
+
+    try {
+      const response = await api.patch(`/api/automation_flows/${flowId}`, {
+        status: "archived",
+      });
+
+      if (response.status === 200) {
+        setFlows((prevFlows) =>
+          prevFlows.map((f) =>
+            getFlowId(f) === flowId ? { ...f, status: "archived" as const } : f,
+          ),
+        );
+
+        toast.success("Flow archived successfully");
+      }
+    } catch (error) {
+      console.error("❌ Archive failed:", error);
+      toast.error("Failed to archive flow");
+    }
+  };
+
+  // Filter and search flows
+  const filteredFlows = flows.filter((flow) => {
+    const matchesSearch = flow.name
+      .toLowerCase()
+      .includes(searchQuery.toLowerCase());
+    const matchesFilter =
+      filterStatus === "all" || flow.status === filterStatus;
+    return matchesSearch && matchesFilter;
+  });
+
+  // Stats calculation
+  const stats = {
+    total: flows.length,
+    live: flows.filter((f) => f.status === "live").length,
+    draft: flows.filter((f) => f.status === "draft").length,
+    archived: flows.filter((f) => f.status === "archived").length,
   };
 
   return (
-    <div className="h-full flex flex-col bg-[#F8FAFC]">
-      <div className="flex flex-1 min-h-0">
-        <aside className="w-56 shrink-0 border-r border-slate-200 bg-white py-4 px-3">
-          <h2 className="text-lg font-bold text-slate-900 px-3 mb-4">Automation</h2>
-          <nav className="space-y-0.5">
-            <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg bg-slate-100 text-slate-900 font-medium text-sm">
-              <LayoutGrid className="w-4 h-4 text-slate-600" />
-              My Automations
-            </button>
-          </nav>
-        </aside>
+    <div className="h-full w-full flex flex-col bg-gradient-to-br from-slate-50 to-slate-100 font-sans">
+      {/* Header */}
+      <div className="bg-white border-b border-slate-200 px-8 py-6 shadow-sm">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900 mb-1">
+              Automations
+            </h1>
+            <p className="text-sm text-slate-600">
+              Create and manage your automation workflows
+            </p>
+          </div>
+          <button
+            onClick={onCreateNew}
+            className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-semibold text-sm shadow-lg shadow-indigo-200 transition-all hover:scale-105 active:scale-95"
+          >
+            <Plus className="w-5 h-5" />
+            New Automation
+          </button>
+        </div>
 
-        <main className="flex-1 overflow-auto p-6">
-          <div className="max-w-5xl mx-auto space-y-4">
-            <h1 className="text-2xl font-bold text-slate-900">My Automations</h1>
-
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input
-                    type="text"
-                    placeholder="Search all Automations"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    className="pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm w-64 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                  />
-                </div>
-                {/* <button
-                  type="button"
-                  className="flex items-center gap-2 px-3 py-2 border-2 border-dashed border-slate-300 rounded-lg text-sm font-medium text-slate-600 hover:border-indigo-400 hover:text-indigo-600"
-                >
-                  <FolderPlus className="w-4 h-4" />
-                  New Folder
-                </button> */}
-              </div>
-              <div className="flex items-center gap-3">
-                <button type="button" className="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-700">
-                  <Trash2 className="w-4 h-4" />
-                  Trash
-                </button>
-                <button
-                  type="button"
-                  onClick={toggleView}
-                  className="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-700"
-                >
-                  {isGridView ? <List className="w-4 h-4" /> : <LayoutGrid className="w-4 h-4" />}
-                  View as {isGridView ? 'list' : 'grid'}
-                </button>
-                <button
-                  onClick={openCreateModal}
-                  className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold shadow-sm"
-                >
-                  <Plus className="w-4 h-4" />
-                  New Automation
-                </button>
-              </div>
+        {/* Stats Cards */}
+        <div className="grid grid-cols-4 gap-4">
+          <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4 border border-blue-200">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-blue-700 uppercase tracking-wide">
+                Total
+              </span>
+              <Zap className="w-4 h-4 text-blue-600" />
             </div>
+            <p className="text-2xl font-bold text-blue-900">{stats.total}</p>
+          </div>
 
-            {loading ? (
-              <div className="flex justify-center py-16">
-                <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
-              </div>
-            ) : isGridView ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {displayedFlows.map((flow) => (
-                  <div
-                    key={flow.id}
-                    onClick={() => onOpenAutomation(flow.id, flow.name ?? 'Untitled')}
-                    className="bg-white rounded-xl border border-slate-200 p-5 hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer group relative"
+          <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-xl p-4 border border-emerald-200">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-emerald-700 uppercase tracking-wide">
+                Live
+              </span>
+              <Play className="w-4 h-4 text-emerald-600 fill-current" />
+            </div>
+            <p className="text-2xl font-bold text-emerald-900">{stats.live}</p>
+          </div>
+
+          <div className="bg-gradient-to-br from-amber-50 to-amber-100 rounded-xl p-4 border border-amber-200">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-amber-700 uppercase tracking-wide">
+                Draft
+              </span>
+              <Pause className="w-4 h-4 text-amber-600" />
+            </div>
+            <p className="text-2xl font-bold text-amber-900">{stats.draft}</p>
+          </div>
+
+          <div className="bg-gradient-to-br from-slate-50 to-slate-100 rounded-xl p-4 border border-slate-200">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                Archived
+              </span>
+              <Archive className="w-4 h-4 text-slate-600" />
+            </div>
+            <p className="text-2xl font-bold text-slate-900">
+              {stats.archived}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Search and Filter Bar */}
+      <div className="bg-white border-b border-slate-200 px-8 py-4">
+        <div className="flex items-center gap-4">
+          <div className="flex-1 relative">
+            <Search className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder="Search automations..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
+            />
+          </div>
+
+          <div className="relative">
+            <button
+              onClick={() => setShowFilterDropdown(!showFilterDropdown)}
+              className="flex items-center gap-2 px-4 py-2.5 border border-slate-200 rounded-xl hover:bg-slate-50 text-sm font-medium text-slate-700 transition-colors"
+            >
+              <Filter className="w-4 h-4" />
+              {filterStatus === "all"
+                ? "All Flows"
+                : filterStatus.charAt(0).toUpperCase() + filterStatus.slice(1)}
+            </button>
+
+            {showFilterDropdown && (
+              <div className="absolute right-0 mt-2 w-48 bg-white border border-slate-200 rounded-xl shadow-lg z-10 overflow-hidden">
+                {["all", "live", "draft", "archived"].map((status) => (
+                  <button
+                    key={status}
+                    onClick={() => {
+                      setFilterStatus(status as typeof filterStatus);
+                      setShowFilterDropdown(false);
+                    }}
+                    className="w-full text-left px-4 py-2.5 hover:bg-slate-50 text-sm font-medium text-slate-700 transition-colors"
                   >
-                    <div className="absolute top-4 right-4 z-10" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        type="button"
-                        onClick={(e) => openEditModal(flow, e)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
-                      >
-                        <MoreVertical className="w-5 h-5" />
-                      </button>
-                    </div>
-                    <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mb-3">
-                      <LayoutGrid className="w-6 h-6 text-slate-400" />
-                    </div>
-                    <div className="flex items-center gap-2 mb-1">
-                      {(flow.status === 'draft' || !flow.status) && (
-                        <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="Draft" />
-                      )}
-                      <span className="font-semibold text-slate-900 truncate pr-8">{flow.name ?? 'Untitled'}</span>
-                    </div>
-                    <p className="text-xs text-slate-500">{formatDate(flow.updated_at ?? flow.created_at)}</p>
-                  </div>
+                    {status === "all"
+                      ? "All Flows"
+                      : status.charAt(0).toUpperCase() + status.slice(1)}
+                  </button>
                 ))}
-              </div>
-            ) : (
-              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                <table className="w-full text-left">
-                  <thead className="bg-slate-50 border-b border-slate-100">
-                    <tr>
-                      <th className="px-4 py-3 w-10">
-                        <input type="checkbox" className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
-                      </th>
-                      <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                        <span className="inline-flex items-center gap-1">
-                          Name
-                        </span>
-                      </th>
-                      <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">Runs</th>
-                      <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                        <span className="inline-flex items-center gap-1">
-                          Modified
-                        </span>
-                      </th>
-                      <th className="px-4 py-3 w-12" />
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {displayedFlows.map((flow) => (
-                      <tr
-                        key={flow.id}
-                        className="hover:bg-slate-50/80 cursor-pointer transition-colors"
-                        onClick={() => onOpenAutomation(flow.id, flow.name ?? 'Untitled')}
-                      >
-                        <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                          <input type="checkbox" className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-medium text-slate-400 uppercase">
-                              {(flow.status as string) === 'published' ? 'LIVE' : 'DRAFT'}
-                            </span>
-                            <span className="font-semibold text-slate-900">{flow.name ?? 'Untitled'}</span>
-                          </div>
-                          {flow.description && (
-                            <p className="text-sm text-slate-500 mt-0.5 line-clamp-1">{flow.description}</p>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-slate-500">—</td>
-                        <td className="px-4 py-3 text-sm text-slate-500">{formatDate(flow.updated_at ?? flow.created_at)}</td>
-                        <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            type="button"
-                            onClick={(e) => openEditModal(flow, e)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
-                            title="Edit"
-                          >
-                            <Pencil className="w-4 h-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {filteredFlows.length === 0 && (
-                  <div className="px-4 py-12 text-center text-slate-500">No automations yet. Create one to get started.</div>
-                )}
               </div>
             )}
           </div>
-        </main>
+        </div>
       </div>
 
-      {/* Create Flow Modal */}
-      {createModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/30 backdrop-blur-[2px] z-[1000] flex items-center justify-center p-6">
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200">
-            <div className="px-6 py-4 border-b border-slate-100">
-              <h2 className="text-lg font-bold text-slate-900">New Automation</h2>
-              <p className="text-sm text-slate-500 mt-0.5">Create a new automation flow.</p>
-            </div>
-            <form onSubmit={handleCreateSubmit} className="p-6 space-y-4">
-              {createError && (
-                <p className="text-sm text-rose-600 bg-rose-50 px-3 py-2 rounded-lg">{createError}</p>
-              )}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Name (required)</label>
-                <input
-                  type="text"
-                  value={createName}
-                  onChange={(e) => setCreateName(e.target.value)}
-                  placeholder="e.g. Welcome Message Flow"
-                  minLength={3}
-                  maxLength={255}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                />
-                <p className="text-xs text-slate-400 mt-1">Min 3, max 255 characters</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Description (optional)</label>
-                <textarea
-                  value={createDescription}
-                  onChange={(e) => setCreateDescription(e.target.value)}
-                  placeholder="e.g. Automated welcome message for new subscribers"
-                  maxLength={500}
-                  rows={3}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 resize-none"
-                />
-                <p className="text-xs text-slate-400 mt-1">Max 500 characters</p>
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setCreateModalOpen(false)}
-                  className="flex-1 px-4 py-2 border border-slate-200 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={createSubmitting}
-                  className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  {createSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                  Create
-                </button>
-              </div>
-            </form>
+      {/* Flows List */}
+      <div className="flex-1 overflow-y-auto px-8 py-6">
+        {loading ? (
+          <div className="flex items-center justify-center h-64">
+            <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
           </div>
-        </div>
-      )}
+        ) : filteredFlows.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-64 text-center">
+            <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-4">
+              <Zap className="w-8 h-8 text-slate-400" />
+            </div>
+            <h3 className="text-lg font-semibold text-slate-700 mb-2">
+              {searchQuery || filterStatus !== "all"
+                ? "No flows found"
+                : "No automations yet"}
+            </h3>
+            <p className="text-sm text-slate-500 max-w-md mb-6">
+              {searchQuery || filterStatus !== "all"
+                ? "Try adjusting your search or filters"
+                : "Create your first automation to get started"}
+            </p>
+            {!searchQuery && filterStatus === "all" && (
+              <button
+                onClick={onCreateNew}
+                className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-semibold text-sm transition-all"
+              >
+                <Plus className="w-5 h-5" />
+                Create Automation
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredFlows.map((flow) => (
+              <FlowCard
+                key={getFlowId(flow)}
+                flow={flow}
+                onEdit={() => onEditFlow(getFlowId(flow), flow.name)}
+                onDelete={() => handleDeleteClick(flow)}
+                onDuplicate={() => handleDuplicate(flow)}
+                onArchive={() => handleArchive(flow)}
+                onUnpublish={() => handleUnpublish(flow)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
 
-      {/* Edit Flow Modal */}
-      {editModalOpen && editingFlow && (
-        <div className="fixed inset-0 bg-slate-900/30 backdrop-blur-[2px] z-[1000] flex items-center justify-center p-6">
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200">
-            <div className="px-6 py-4 border-b border-slate-100">
-              <h2 className="text-lg font-bold text-slate-900">Edit automation</h2>
-              <p className="text-sm text-slate-500 mt-0.5">Update name and description.</p>
+      {/* ============================================================================ */}
+      {/* NEW: DELETE CONFIRMATION MODAL */}
+      {/* ============================================================================ */}
+      {showDeleteModal && flowToDelete && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 animate-in fade-in zoom-in duration-200">
+            <div className="flex items-start gap-4 mb-6">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center shrink-0">
+                <Trash2 className="w-6 h-6 text-red-600" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-xl font-bold text-slate-900 mb-2">
+                  Delete Automation?
+                </h3>
+                <p className="text-sm text-slate-600">
+                  Are you sure you want to delete{" "}
+                  <span className="font-semibold">"{flowToDelete.name}"</span>?
+                  This action cannot be undone.
+                </p>
+              </div>
             </div>
-            <form onSubmit={handleEditSubmit} className="p-6 space-y-4">
-              {editError && (
-                <p className="text-sm text-rose-600 bg-rose-50 px-3 py-2 rounded-lg">{editError}</p>
-              )}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Name (required)</label>
-                <input
-                  type="text"
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  placeholder="Flow name"
-                  minLength={3}
-                  maxLength={255}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                />
+
+            {flowToDelete.status === "live" && (
+              <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                <div className="flex items-start gap-3">
+                  <div className="w-5 h-5 shrink-0">
+                    <svg
+                      className="w-5 h-5 text-amber-600"
+                      fill="currentColor"
+                      viewBox="0 0 20 20"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-amber-900 mb-1">
+                      Warning: Flow is Live
+                    </p>
+                    <p className="text-xs text-amber-700">
+                      This automation is currently active. Deleting it will
+                      immediately stop all triggers and scheduled actions.
+                    </p>
+                  </div>
+                </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Description (optional)</label>
-                <textarea
-                  value={editDescription}
-                  onChange={(e) => setEditDescription(e.target.value)}
-                  placeholder="Description"
-                  maxLength={500}
-                  rows={3}
-                  className="w-full px-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 resize-none"
-                />
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => { setEditModalOpen(false); setEditingFlow(null); }}
-                  className="flex-1 px-4 py-2 border border-slate-200 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={editSubmitting}
-                  className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  {editSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                  Save
-                </button>
-              </div>
-            </form>
+            )}
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleDeleteCancel}
+                disabled={isDeleting}
+                className="flex-1 px-4 py-2.5 border border-slate-200 rounded-xl font-semibold text-sm text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteSubmit}
+                disabled={isDeleting}
+                className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-semibold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    Delete Flow
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ============================================================================
+// FLOW CARD COMPONENT (Updated with new actions)
+// ============================================================================
+interface FlowCardProps {
+  flow: AutomationFlow;
+  onEdit: () => void;
+  onDelete: () => void;
+  onDuplicate: () => void;
+  onArchive: () => void;
+  onUnpublish: () => void;
+}
+
+function FlowCard({
+  flow,
+  onEdit,
+  onDelete,
+  onDuplicate,
+  onArchive,
+  onUnpublish,
+}: FlowCardProps) {
+  const [showMenu, setShowMenu] = useState(false);
+
+  const getStatusBadge = () => {
+    switch (flow.status) {
+      case "live":
+        return (
+          <span className="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-700 text-[10px] font-bold uppercase tracking-wide flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+            Live
+          </span>
+        );
+      case "draft":
+        return (
+          <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-600 text-[10px] font-bold uppercase tracking-wide">
+            Draft
+          </span>
+        );
+      case "archived":
+        return (
+          <span className="px-2.5 py-1 rounded-lg bg-red-100 text-red-700 text-[10px] font-bold uppercase tracking-wide">
+            Archived
+          </span>
+        );
+      default:
+        return null;
+    }
+  };
+
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return "Never";
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return "Just now";
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString();
+  };
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 hover:border-indigo-300 hover:shadow-lg transition-all cursor-pointer group overflow-hidden">
+      <div onClick={onEdit} className="p-6">
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex-1 min-w-0">
+            <h3 className="text-lg font-bold text-slate-900 mb-1 truncate group-hover:text-indigo-600 transition-colors">
+              {flow.name}
+            </h3>
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <Calendar className="w-3.5 h-3.5" />
+              <span>Created {formatDate(flow.created_at)}</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {getStatusBadge()}
+            <div className="relative">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowMenu(!showMenu);
+                }}
+                className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <MoreVertical className="w-5 h-5" />
+              </button>
+
+              {showMenu && (
+                <>
+                  <div
+                    className="fixed inset-0 z-10"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowMenu(false);
+                    }}
+                  />
+                  <div className="absolute right-0 mt-2 w-48 bg-white border border-slate-200 rounded-xl shadow-lg z-20 overflow-hidden">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEdit();
+                        setShowMenu(false);
+                      }}
+                      className="w-full text-left px-4 py-2.5 hover:bg-slate-50 text-sm font-medium text-slate-700 transition-colors flex items-center gap-2"
+                    >
+                      <Play className="w-4 h-4" />
+                      Edit Flow
+                    </button>
+
+                    {flow.status === "live" && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onUnpublish();
+                          setShowMenu(false);
+                        }}
+                        className="w-full text-left px-4 py-2.5 hover:bg-slate-50 text-sm font-medium text-slate-700 transition-colors flex items-center gap-2"
+                      >
+                        <Pause className="w-4 h-4" />
+                        Unpublish
+                      </button>
+                    )}
+
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDuplicate();
+                        setShowMenu(false);
+                      }}
+                      className="w-full text-left px-4 py-2.5 hover:bg-slate-50 text-sm font-medium text-slate-700 transition-colors flex items-center gap-2"
+                    >
+                      <Copy className="w-4 h-4" />
+                      Duplicate
+                    </button>
+
+                    {flow.status !== "archived" && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onArchive();
+                          setShowMenu(false);
+                        }}
+                        className="w-full text-left px-4 py-2.5 hover:bg-slate-50 text-sm font-medium text-slate-700 transition-colors flex items-center gap-2"
+                      >
+                        <Archive className="w-4 h-4" />
+                        Archive
+                      </button>
+                    )}
+
+                    <div className="border-t border-slate-100" />
+
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete();
+                        setShowMenu(false);
+                      }}
+                      className="w-full text-left px-4 py-2.5 hover:bg-red-50 text-sm font-medium text-red-600 transition-colors flex items-center gap-2"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Delete
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-slate-50 rounded-xl p-3">
+            <div className="flex items-center gap-2 mb-1">
+              <Zap className="w-3.5 h-3.5 text-slate-500" />
+              <span className="text-xs font-semibold text-slate-600">
+                Triggers
+              </span>
+            </div>
+            <p className="text-lg font-bold text-slate-900">
+              {flow.trigger_count || 0}
+            </p>
+          </div>
+
+          <div className="bg-slate-50 rounded-xl p-3">
+            <div className="flex items-center gap-2 mb-1">
+              <Clock className="w-3.5 h-3.5 text-slate-500" />
+              <span className="text-xs font-semibold text-slate-600">
+                Last Run
+              </span>
+            </div>
+            <p className="text-xs font-bold text-slate-900 truncate">
+              {formatDate(flow.last_run)}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="px-6 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+        <div className="flex items-center gap-2 text-xs text-slate-500">
+          <Users className="w-3.5 h-3.5" />
+          <span>Updated {formatDate(flow.updated_at)}</span>
+        </div>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onEdit();
+          }}
+          className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 transition-colors"
+        >
+          View Details →
+        </button>
+      </div>
     </div>
   );
 }
