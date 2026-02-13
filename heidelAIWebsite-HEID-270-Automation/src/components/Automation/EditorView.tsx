@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import SidebarSettings from "./SidebarSettings";
 import { AddStepMenu, TriggerSelectionModal } from "./Popups";
 import { validateFlowBeforeSave, type EditorNode } from "./flowExport";
@@ -6,7 +6,7 @@ import { buildFlowDetails } from "./automationFlowSchema";
 import { STEP_SECTIONS, STEP_BY_ID, StepIcon } from "./stepDefinitions";
 import { useApi } from "@/lib/session_api";
 import { toast } from "sonner";
-import { Play, Save, Eye, ArrowLeft, Undo2, Redo2, Monitor, MoreVertical, Pencil, HelpCircle, ChevronRight, Loader2 } from 'lucide-react';
+import { Play, Save, ArrowLeft, Undo2, Redo2, Monitor, MoreVertical, Pencil, HelpCircle, ChevronRight, Loader2 } from 'lucide-react';
 
 type Node = EditorNode;
 
@@ -14,7 +14,6 @@ interface Connection {
   from: string;
   to: string;
 }
-
 
 interface FlowStepProps {
   node: Node;
@@ -48,7 +47,6 @@ const getBezierPath = (from: Node, to: Node): string => {
   return `M ${startX} ${startY} C ${cp1X} ${cp1Y}, ${cp2X} ${cp2Y}, ${endX} ${endY}`;
 };
 
-
 const AppIcon = ({ app }: { app?: string }) => {
   if (app === "instagram") {
     return (
@@ -75,22 +73,6 @@ const AppIcon = ({ app }: { app?: string }) => {
           d="M17.5 14.45c-.25-.12-1.47-.72-1.69-.81-.23-.08-.39-.12-.56.12-.17.25-.64.81-.78.97-.14.17-.29.19-.54.06-.25-.12-1.05-.39-1.99-1.23-.74-.66-1.23-1.47-1.38-1.72-.14-.25-.02-.38.11-.51.11-.11.25-.29.37-.43s.17-.25.25-.41c.08-.17.04-.31-.02-.43s-.56-1.34-.76-1.84c-.2-.48-.41-.42-.56-.43h-.48c-.17 0-.43.06-.66.31-.23.25-.87.85-.87 2.07s.89 2.4 1.01 2.56c.12.17 1.75 2.67 4.23 3.74.59.26 1.05.41 1.41.52.59.19 1.13.16 1.56.1.48-.07 1.47-.6 1.67-1.18.21-.58.21-1.07.14-1.18s-.22-.16-.47-.28z"
           fill="white"
         />
-      </svg>
-    );
-  }
-
-  if (app === "email") {
-    return (
-      <svg className="w-5 h-5 text-blue-500" fill="currentColor" viewBox="0 0 24 24">
-        <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z" />
-      </svg>
-    );
-  }
-
-  if (app === "ai") {
-    return (
-      <svg className="w-5 h-5 text-purple-500" fill="currentColor" viewBox="0 0 24 24">
-        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
       </svg>
     );
   }
@@ -178,7 +160,7 @@ const FlowStep = ({ node, isSelected, onMouseDown, onAddLink, onDelete }: FlowSt
         </div>
       </div>
 
-      {/* trigger: "Then" at bottom center; others: right center */}
+      {/* Connection Points */}
       {isTrigger ? (
         <div className="absolute left-1/2 -translate-x-1/2 -bottom-3 flex flex-col items-center group z-10">
           <button
@@ -230,11 +212,11 @@ export default function EditorView({ onBack, flowId: flowIdProp, flowName: flowN
     setFlowNameLocal(v);
     onFlowNameChange?.(v);
   };
+  
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showTriggerModal, setShowTriggerModal] = useState(false);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
-
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
@@ -244,8 +226,197 @@ export default function EditorView({ onBack, flowId: flowIdProp, flowName: flowN
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [activePortId, setActivePortId] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [loadingFlow, setLoadingFlow] = useState(false);
 
   const canvasRef = useRef<HTMLDivElement>(null);
+
+  // ============================================================================
+  // LOAD EXISTING FLOW ON MOUNT
+  // ============================================================================
+  useEffect(() => {
+    const loadFlow = async () => {
+      // Only load if we have a valid flow ID (not 'new')
+      if (!flowIdProp || flowIdProp === 'new' || flowIdProp.startsWith('flow_')) {
+        return;
+      }
+
+      setLoadingFlow(true);
+      try {
+        console.log('🔄 Loading flow:', flowIdProp);
+        const response = await api.get(`/api/automation_flows/${flowIdProp}`);
+        
+        if (response.status !== 200) {
+          throw new Error('Failed to load flow');
+        }
+
+        const flowData = response.data;
+        console.log('✅ Flow data loaded:', flowData);
+
+        // Reconstruct nodes and connections from backend format
+        const reconstructedNodes: Node[] = [];
+        const reconstructedConnections: Connection[] = [];
+        const nodeIdMap = new Map<string, string>(); // Map backend node IDs to frontend node IDs
+
+        // Process triggers first
+        if (flowData.flow_data?.triggers) {
+          flowData.flow_data.triggers.forEach((trigger: any, index: number) => {
+            const nodeId = `node-trigger-${index}`;
+            const uiPos = flowData.flow_data.ui_config?.nodes?.[nodeId] || { x: 200, y: 100 + index * 200 };
+            
+            const triggerNode: Node = {
+              id: nodeId,
+              type: 'trigger',
+              label: trigger.type === 'instagram_comment' ? 'Post or Reel Comments' : 
+                     trigger.type === 'story_reply' ? 'Story Reply' :
+                     trigger.type === 'instagram_message' ? 'Instagram Message' :
+                     'Trigger',
+              description: 'Automation trigger',
+              x: uiPos.x,
+              y: uiPos.y,
+              data: {
+                stepId: `trigger_${trigger.type}`,
+                triggerType: trigger.type,
+                triggerConfig: trigger.config || {},
+              }
+            };
+
+            reconstructedNodes.push(triggerNode);
+
+            // Connect trigger to first node
+            if (trigger.start_node_id) {
+              nodeIdMap.set(trigger.start_node_id, nodeId);
+              reconstructedConnections.push({
+                from: nodeId,
+                to: trigger.start_node_id
+              });
+            }
+          });
+        }
+
+        // Process action/logic nodes
+        if (flowData.flow_data?.nodes) {
+          Object.entries(flowData.flow_data.nodes).forEach(([backendId, nodeData]: [string, any]) => {
+            const frontendId = `node-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            nodeIdMap.set(backendId, frontendId);
+
+            const uiPos = flowData.flow_data.ui_config?.nodes?.[backendId] || { x: 400, y: 300 };
+
+            let nodeType: Node['type'] = 'action';
+            let label = nodeData.name || 'Step';
+            let data: Node['data'] = {};
+
+            // Map backend node types to frontend
+            if (nodeData.type === 'message') {
+              nodeType = 'action';
+              label = 'Send Message';
+              data = {
+                text: nodeData.content?.text || '',
+                media_url: nodeData.content?.media_url || null,
+                buttons: nodeData.content?.buttons || [],
+                contentKind: 'text'
+              };
+            } else if (nodeData.type === 'smart_delay' || nodeData.type === 'delay') {
+              nodeType = 'logic';
+              label = 'Smart Delay';
+              data = {
+                logicType: 'delay',
+                delayAmount: nodeData.config?.amount || 5,
+                delayUnit: nodeData.config?.unit || 'minutes'
+              };
+            } else if (nodeData.type === 'condition') {
+              nodeType = 'logic';
+              label = 'Condition';
+              data = {
+                logicType: 'condition',
+                conditionVariable: nodeData.config?.variable || '',
+                conditionOperator: nodeData.config?.operator || 'includes',
+                conditionValue: nodeData.config?.value || ''
+              };
+            } else if (nodeData.type === 'randomizer') {
+              nodeType = 'logic';
+              label = 'Randomizer';
+              data = {
+                logicType: 'randomizer'
+              };
+            } else if (nodeData.type === 'action') {
+              nodeType = 'action';
+              label = nodeData.name || 'Action';
+              data = {
+                actionType: nodeData.config?.action_type || 'add_tag',
+                tagName: nodeData.config?.tag_name || '',
+                fieldName: nodeData.config?.field_name || '',
+                fieldValue: nodeData.config?.field_value || ''
+              };
+            }
+
+            const newNode: Node = {
+              id: frontendId,
+              type: nodeType,
+              label,
+              description: nodeData.name || 'Step',
+              x: uiPos.x,
+              y: uiPos.y,
+              data
+            };
+
+            reconstructedNodes.push(newNode);
+
+            // Create connections
+            if (nodeData.next_node_id) {
+              reconstructedConnections.push({
+                from: frontendId,
+                to: nodeData.next_node_id
+              });
+            }
+
+            // Handle condition paths
+            if (nodeData.paths) {
+              if (nodeData.paths.true) {
+                reconstructedConnections.push({
+                  from: frontendId,
+                  to: nodeData.paths.true
+                });
+              }
+              if (nodeData.paths.false) {
+                reconstructedConnections.push({
+                  from: frontendId,
+                  to: nodeData.paths.false
+                });
+              }
+            }
+          });
+        }
+
+        // Update connection IDs to use frontend node IDs
+        const finalConnections = reconstructedConnections.map(conn => ({
+          from: nodeIdMap.get(conn.from) || conn.from,
+          to: nodeIdMap.get(conn.to) || conn.to
+        }));
+
+        setNodes(reconstructedNodes);
+        setConnections(finalConnections);
+        setFlowId(flowIdProp);
+
+        console.log('✅ Flow loaded successfully:', {
+          nodes: reconstructedNodes.length,
+          connections: finalConnections.length
+        });
+
+        // Auto-fit the canvas
+        setTimeout(() => autoFit(), 100);
+
+      } catch (error) {
+        console.error('❌ Error loading flow:', error);
+        toast.error('Failed to load flow', {
+          description: 'Could not load the automation flow. Please try again.'
+        });
+      } finally {
+        setLoadingFlow(false);
+      }
+    };
+
+    loadFlow();
+  }, [flowIdProp, api]);
 
   // Canvas Auto-Fit Logic
   const autoFit = () => {
@@ -364,43 +535,6 @@ export default function EditorView({ onBack, flowId: flowIdProp, flowName: flowN
     });
   };
 
-  const addNode = (type: string, app?: string, logicType?: string, extra?: Partial<Node['data']>) => {
-    const id = `node-${Date.now()}`;
-    const baseLabel =
-      type === "action"
-        ? app === "instagram"
-          ? "Send Message"
-          : app === "whatsapp"
-          ? "WhatsApp Message"
-          : "Action"
-        : logicType === "delay"
-        ? "Wait"
-        : logicType === "condition"
-        ? "Condition"
-        : logicType === "randomizer"
-        ? "Randomizer"
-        : "Logic Step";
-    const newNode: Node = {
-      id,
-      type: type as Node['type'],
-      app: app as Node['app'],
-      label: baseLabel,
-      description: type === "action" ? "Send Message" : logicType === "delay" ? "Wait before next step" : "Perform Logic",
-      x: nodes.length > 0 ? nodes[nodes.length - 1].x + 400 : 200,
-      y: nodes.length > 0 ? nodes[nodes.length - 1].y : 300,
-      data: logicType ? { logicType: logicType as 'delay' | 'condition' | 'randomizer' | 'ai' | 'actions', delayAmount: 5, delayUnit: 'minutes' as const, ...extra } : { ...extra },
-    };
-
-    setNodes((prev) => [...prev, newNode]);
-
-    if (activePortId) {
-      setConnections((prev) => [...prev, { from: activePortId, to: id }]);
-      setActivePortId(null);
-    }
-
-    setShowAddMenu(false);
-  };
-
   const addNodeByStepId = (stepId: string) => {
     const step = STEP_BY_ID[stepId];
     if (!step) return;
@@ -435,8 +569,12 @@ export default function EditorView({ onBack, flowId: flowIdProp, flowName: flowN
     setShowAddMenu(false);
   };
 
+  // ============================================================================
+  // SAVE FLOW (CREATE OR UPDATE)
+  // ============================================================================
   const handleSave = async () => {
     const edges = connections.map((c) => ({ from: c.from, to: c.to }));
+    
     if (nodes.length > 0) {
       const validation = validateFlowBeforeSave(nodes, edges);
       if (!validation.valid) {
@@ -445,6 +583,7 @@ export default function EditorView({ onBack, flowId: flowIdProp, flowName: flowN
         return;
       }
     }
+
     setSaveStatus('saving');
     try {
       const flow_details = buildFlowDetails(nodes, edges, {
@@ -453,16 +592,56 @@ export default function EditorView({ onBack, flowId: flowIdProp, flowName: flowN
         status: 'draft',
         version: 1,
       });
-      if (flowId && flowId !== 'new') {
-        await api.patch(`/api/automation_flows/${flowId}`, flow_details);
+
+      let savedFlowId = flowId;
+
+      // Determine if this is an update or create
+      const isExistingFlow = flowIdProp && flowIdProp !== 'new' && !flowIdProp.startsWith('flow_');
+
+      if (isExistingFlow) {
+        // UPDATE existing flow
+        console.log('🔄 Updating flow:', flowIdProp);
+        const response = await api.patch(`/api/automation_flows/${flowIdProp}`, flow_details);
+        
+        console.log('✅ Update response:', response);
+
+        // Handle different response formats
+        if (response.status === 200) {
+          savedFlowId = response.data?.id || response.data?._id || flowIdProp;
+          toast.success('Flow updated successfully');
+        } else {
+          throw new Error('Update failed');
+        }
       } else {
+        // CREATE new flow
+        console.log('➕ Creating new flow');
         const response = await api.post('/api/automation_flows', flow_details);
-        if (response.data?.id) setFlowId(String(response.data.id));
+        
+        console.log('✅ Create response:', response);
+
+        if (response.status === 201 || response.status === 200) {
+          savedFlowId = response.data?.id || response.data?._id || response.data?.flow_id;
+          
+          if (savedFlowId) {
+            setFlowId(savedFlowId);
+            toast.success('Flow created successfully');
+          } else {
+            throw new Error('No flow ID returned');
+          }
+        } else {
+          throw new Error('Create failed');
+        }
       }
+
       setSaveStatus('saved');
-      toast.success('Flow saved successfully');
+
+      // Auto-reset status after 3 seconds
+      setTimeout(() => {
+        setSaveStatus('idle');
+      }, 3000);
+
     } catch (err: unknown) {
-      console.error('Save failed:', err);
+      console.error('❌ Save failed:', err);
       setSaveStatus('error');
       const message = (err as { response?: { data?: { message?: string }; status?: number } })?.response?.data?.message ?? 'Failed to save flow';
       toast.error(message);
@@ -470,10 +649,9 @@ export default function EditorView({ onBack, flowId: flowIdProp, flowName: flowN
   };
 
   // ============================================================================
-  // NEW: PUBLISH FLOW HANDLER
+  // PUBLISH FLOW
   // ============================================================================
   const handlePublish = async () => {
-    // Step 1: Validate the flow
     const edges = connections.map((c) => ({ from: c.from, to: c.to }));
     
     if (nodes.length === 0) {
@@ -487,34 +665,35 @@ export default function EditorView({ onBack, flowId: flowIdProp, flowName: flowN
       return;
     }
 
-    // Step 2: Save the flow first
     setSaveStatus('saving');
     try {
       const flow_details = buildFlowDetails(nodes, edges, {
         flowId,
         flowName,
-        status: 'draft', // Keep as draft during save
+        status: 'draft',
         version: 1,
       });
 
       let currentFlowId = flowId;
+      const isExistingFlow = flowIdProp && flowIdProp !== 'new' && !flowIdProp.startsWith('flow_');
 
-      // Save if new or update if existing
-      if (flowId && flowId !== 'new') {
-        await api.patch(`/api/automation_flows/${flowId}`, flow_details);
+      // Save the flow first
+      if (isExistingFlow) {
+        await api.patch(`/api/automation_flows/${flowIdProp}`, flow_details);
+        currentFlowId = flowIdProp;
       } else {
         const response = await api.post('/api/automation_flows', flow_details);
-        if (response.data?.id) {
-          currentFlowId = String(response.data.id);
+        currentFlowId = response.data?.id || response.data?._id || response.data?.flow_id;
+        
+        if (currentFlowId) {
           setFlowId(currentFlowId);
         }
       }
 
-      // Step 3: Now publish the flow
-      if (currentFlowId && currentFlowId !== 'new') {
-        const publishResponse = await api.post(
-          `/api/automation_flows/${currentFlowId}/publish`
-        );
+      // Now publish the flow
+      if (currentFlowId && currentFlowId !== 'new' && !currentFlowId.startsWith('flow_')) {
+        console.log('🚀 Publishing flow:', currentFlowId);
+        const publishResponse = await api.post(`/api/automation_flows/${currentFlowId}/publish`);
 
         if (publishResponse.status === 200) {
           setSaveStatus('saved');
@@ -522,14 +701,16 @@ export default function EditorView({ onBack, flowId: flowIdProp, flowName: flowN
             description: 'Your automation is now live and triggers have been registered.',
           });
           
-          // Optional: Navigate back to dashboard after successful publish
+          // Navigate back to dashboard after successful publish
           setTimeout(() => {
             onBack();
           }, 1500);
         }
+      } else {
+        throw new Error('Invalid flow ID for publishing');
       }
     } catch (err: unknown) {
-      console.error('Publish failed:', err);
+      console.error('❌ Publish failed:', err);
       setSaveStatus('error');
       
       const errorResponse = err as { 
@@ -556,8 +737,19 @@ export default function EditorView({ onBack, flowId: flowIdProp, flowName: flowN
     setShowTriggerModal(false);
   };
 
-  // Render
-return (
+  // Loading state
+  if (loadingFlow) {
+    return (
+      <div className="h-full w-full flex items-center justify-center bg-[#F8FAFC]">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 animate-spin text-indigo-600 mx-auto mb-4" />
+          <p className="text-slate-600 font-medium">Loading flow...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
     <div className="h-full w-full flex flex-col bg-[#F8FAFC] overflow-hidden relative font-sans">
       {/* Top Bar */}
       <div className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0 z-20">
@@ -590,6 +782,11 @@ return (
                 <span className="w-4 h-4 rounded-full bg-emerald-500 flex items-center justify-center text-white text-[10px]">✓</span>
                 Saved
               </span>
+            ) : saveStatus === 'saving' ? (
+              <span className="text-sm font-medium text-slate-600 flex items-center gap-1.5">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Saving...
+              </span>
             ) : (
               <button onClick={handleSave} className="text-sm text-slate-500 hover:text-slate-700 flex items-center gap-1.5">
                 <Save className="w-4 h-4" /> Save
@@ -610,7 +807,6 @@ return (
               <span className="text-slate-400">▾</span>
             </button>
             
-            {/* UPDATED: Set Live Button with Publish Handler */}
             <button 
               onClick={handlePublish}
               disabled={saveStatus === 'saving'}
@@ -633,32 +829,23 @@ return (
               <MoreVertical className="w-5 h-5" />
             </button>
           </div>
-          <a
-            href="#"
-            onClick={(e) => { e.preventDefault(); onBack(); }}
-            className="text-sm text-slate-500 hover:text-slate-700 ml-2"
-          >
-            Go To Basic Builder
-          </a>
         </div>
       </div>
 
       <div className="flex-1 flex overflow-hidden relative">
         
-        {/* COLLAPSIBLE SIDEBAR CONTAINER */}
+        {/* LEFT SIDEBAR */}
         <div
           className={`h-full flex-none transition-all duration-300 ease-out relative z-20 overflow-hidden ${
             sidebarOpen ? 'w-64' : 'w-0'
           }`}
         >
-          {/* INNER CONTENT WRAPPER */}
           <div className="w-64 h-full bg-white border-r border-slate-200 flex flex-col shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
             <div className="px-4 py-4 border-b border-slate-100">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Add Step</h3>
               <p className="text-[11px] text-slate-500 mt-0.5">Click to add to canvas</p>
             </div>
             
-            {/* The List of Steps (Add Menu Content) */}
             <div className="flex-1 overflow-y-auto py-3">
               {STEP_SECTIONS.map((section) => (
                 <div key={section.title} className="mb-6">
@@ -694,7 +881,7 @@ return (
           </div>
         </div>
 
-        {/* 2. TOGGLE BUTTON (Outside the Container) */}
+        {/* TOGGLE BUTTON */}
         <button
           type="button"
           onClick={() => setSidebarOpen((open) => !open)}
@@ -707,7 +894,7 @@ return (
           />
         </button>
 
-        {/* 3. SETTINGS SIDEBAR (Right Panel) */}
+        {/* SETTINGS SIDEBAR (Right Panel) */}
         <div
           className={`absolute top-0 bottom-0 w-[340px] bg-white border-r border-slate-200 transition-all duration-300 shadow-2xl ${
             selectedNodeId ? "z-30" : "z-10"
@@ -728,7 +915,7 @@ return (
           />
         </div>
 
-        {/* 4. CANVAS */}
+        {/* CANVAS */}
         <div
           ref={canvasRef}
           onMouseDown={handleMouseDown}
@@ -758,30 +945,29 @@ return (
                 className="absolute inset-0 pointer-events-none transition-transform duration-75 ease-out origin-top-left"
                 style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
               >
-            {/* Connections & Nodes */}
-            <svg className="absolute inset-0 w-[10000px] h-[10000px]">
-              <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b" /></marker></defs>
-              {connections.map((conn, idx) => {
-                const fromNode = nodes.find((n) => n.id === conn.from);
-                const toNode = nodes.find((n) => n.id === conn.to);
-                if (!fromNode || !toNode) return null;
-                return <path key={idx} d={getBezierPath(fromNode, toNode)} stroke="#94a3b8" strokeWidth="2.5" fill="none" markerEnd="url(#arrow)" className="transition-all" />;
-              })}
-            </svg>
-            {nodes.map((node) => (
-              <FlowStep
-                key={node.id}
-                node={node}
-                isSelected={selectedNodeId === node.id}
-                onMouseDown={(e) => startDrag(e, node.id)}
-                onAddLink={(e) => { e.stopPropagation(); setActivePortId(node.id); setShowAddMenu(true); }}
-                onDelete={() => {
-                  setNodes((prev) => prev.filter((n) => n.id !== node.id));
-                  setConnections((prev) => prev.filter((c) => c.from !== node.id && c.to !== node.id));
-                  setSelectedNodeId(null);
-                }}
-              />
-            ))}
+                <svg className="absolute inset-0 w-[10000px] h-[10000px]">
+                  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b" /></marker></defs>
+                  {connections.map((conn, idx) => {
+                    const fromNode = nodes.find((n) => n.id === conn.from);
+                    const toNode = nodes.find((n) => n.id === conn.to);
+                    if (!fromNode || !toNode) return null;
+                    return <path key={idx} d={getBezierPath(fromNode, toNode)} stroke="#94a3b8" strokeWidth="2.5" fill="none" markerEnd="url(#arrow)" className="transition-all" />;
+                  })}
+                </svg>
+                {nodes.map((node) => (
+                  <FlowStep
+                    key={node.id}
+                    node={node}
+                    isSelected={selectedNodeId === node.id}
+                    onMouseDown={(e) => startDrag(e, node.id)}
+                    onAddLink={(e) => { e.stopPropagation(); setActivePortId(node.id); setShowAddMenu(true); }}
+                    onDelete={() => {
+                      setNodes((prev) => prev.filter((n) => n.id !== node.id));
+                      setConnections((prev) => prev.filter((c) => c.from !== node.id && c.to !== node.id));
+                      setSelectedNodeId(null);
+                    }}
+                  />
+                ))}
               </div>
 
               <div className="absolute top-4 left-1/2 -translate-x-1/2 pointer-events-none flex items-center gap-2 px-3 py-2 bg-amber-100/90 border border-amber-200 rounded-lg shadow-sm text-[11px] font-medium text-amber-900">
@@ -801,7 +987,7 @@ return (
           )}
         </div>
 
-        {showAddMenu && <AddStepMenu onClose={() => setShowAddMenu(false)} onSelectStep={addNodeByStepId} onSelect={addNode} isFirstStep={nodes.find((n) => n.id === activePortId)?.type === 'trigger'} />}
+        {showAddMenu && <AddStepMenu onClose={() => setShowAddMenu(false)} onSelectStep={addNodeByStepId} onSelect={() => {}} isFirstStep={nodes.find((n) => n.id === activePortId)?.type === 'trigger'} />}
         {showTriggerModal && <TriggerSelectionModal onClose={() => setShowTriggerModal(false)} onSelectTrigger={handleSelectTrigger} />}
       </div>
     </div>
