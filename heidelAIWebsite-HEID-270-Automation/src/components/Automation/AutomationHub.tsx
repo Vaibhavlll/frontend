@@ -18,6 +18,11 @@ export default function AutomationHub() {
     setActiveWorkflowName("Untitled");
     setView("editor");
   };
+  const handleFlowIdChange = (newFlowId: string) => {
+    console.log('🔄 AutomationHub: Flow ID changed to:', newFlowId);
+    setActiveFlowId(newFlowId);
+  };
+
 
   return (
     <div className="flex flex-col h-screen w-full bg-[#F8FAFC] text-slate-900 font-sans overflow-hidden selection:bg-indigo-100">
@@ -103,12 +108,13 @@ export default function AutomationHub() {
           }}
         />
       ) : (
-        <EditorView
-          onBack={() => setView("dashboard")}
-          flowId={activeFlowId}
-          flowName={activeWorkflowName}
-          onFlowNameChange={setActiveWorkflowName}
-        />
+          <EditorView
+            onBack={() => setView("dashboard")}
+            flowId={activeFlowId}
+            flowName={activeWorkflowName}
+            onFlowNameChange={setActiveWorkflowName}
+            onFlowIdChange={handleFlowIdChange}  // NEW!
+          />
         )}
       </main>
 
